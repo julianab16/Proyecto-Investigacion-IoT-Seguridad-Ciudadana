@@ -18,10 +18,17 @@ print(xmax)
 polygons = [box(x, y, x+cell_size, y+cell_size) for x in cols for y in rows]
 grid = gpd.GeoDataFrame(geometry=polygons, crs=cali.crs)
 
+
+
 df = pd.read_csv(r"C:\Users\Usuario\Documents\Proyecto Investigacion IoT Seguridad Ciudadana\violencia-db\casos_violencia.csv")
 geometry = [Point(xy) for xy in zip(df["lon"], df["lat"])]
 gdf_casos = gpd.GeoDataFrame(df, geometry=geometry, crs="EPSG:4326")
 gdf_casos = gdf_casos.to_crs(grid.crs)
+
+df_estaciones = pd.read_csv(r"C:\Users\marce\OneDrive\estaciones.csv", delimiter=";")
+geometry_est = [Point(xy) for xy in zip(df_estaciones["Y"], df_estaciones["X"])]
+gdf_estaciones = gpd.GeoDataFrame(df_estaciones, geometry=geometry_est, crs="EPSG:4326")
+gdf_estaciones = gdf_estaciones.to_crs(grid.crs)
 
 # Asignar cada caso a una celda
 casos_con_celda = gpd.sjoin(gdf_casos, grid, how="left", predicate="within")
@@ -42,4 +49,10 @@ fig, ax = plt.subplots(figsize=(10, 10))
 cali.plot(ax=ax, color="white", edgecolor="black")
 grid_cali.plot(ax=ax, facecolor="none", edgecolor="red", linewidth=0.2)
 ax.set_title("Grilla 50x50m sobre Cali", fontsize=14)
+plt.show()
+
+gdf_estaciones.plot(ax=ax, color="green", markersize=50, marker="^", label="Estación Policía")
+
+plt.title("Mapa de calor de violencia en Cali (50m x 50m)")
+plt.legend()
 plt.show()
