@@ -1,8 +1,9 @@
-
 import matplotlib.pyplot as plt
 from collections import namedtuple
 import numpy as np
 import random
+import pandas as pd
+
 
 Homicidio = namedtuple("Homicidio", ["codigo_caso", "ubicacion"])
 
@@ -12,7 +13,6 @@ for i in range(500):
     x = random.uniform(0, 25000)  # coordenada X en metros (0 a 25 km)
     y = random.uniform(0, 25000)  # coordenada Y en metros (0 a 25 km)
     homicidios.append(Homicidio(codigo_caso=f"H{i+1}", ubicacion=(x, y)))
-
 
 def grafica_malla_real(homicidios):
     # Dimensiones aproximadas de la grilla real
@@ -38,12 +38,9 @@ def grafica_malla_real(homicidios):
 def algoritmo_malla():
     Caso = namedtuple("Caso", ["tipo", "ubicacion"])
 
-    # datos ficticios
-
     homicidios = [Caso("H", (random.uniform(0, 25000), random.uniform(0, 25000))) for _ in range(900)]
     hurtos = [Caso("R", (random.uniform(0, 25000), random.uniform(0, 25000))) for _ in range(3000)]
-    vgenero = [Caso("VG", (random.uniform(0, 25000), random.uniform(0, 25000))) for _ in range(400)]
-
+    vgenero = [Caso("VG", (2000, 2000)) for _ in range(400)]
 
     # configuración de la malla
     nx, ny = 500, 495   # ~247.500 celdas de 50×50 m
@@ -84,7 +81,7 @@ def algoritmo_malla():
     print(f"Porcentaje ocupado: {(len(valores_no_cero)/(nx*ny)*100):.1f}%")
     
 
-    # 7. Crear matriz clasificada por quintiles
+    # Crear matriz clasificada por quintiles
     matriz_clasificada = np.zeros_like(matriz)
     
     # Asignar valores de quintil a cada celda
@@ -138,11 +135,7 @@ def algoritmo_malla():
 def ejemplo_casos_multiples():
     """
     Ejemplo específico: qué pasa cuando varios casos caen en la misma celda
-    """
-    print("=" * 70)
-    print("🎯 EJEMPLO: MÚLTIPLES CASOS EN LA MISMA CELDA")
-    print("=" * 70)
-    
+    """    
     # Configuración simple
     nx, ny = 5, 5  # Malla 5x5 para ver mejor el efecto
     area_ciudad = 500
@@ -175,7 +168,6 @@ def ejemplo_casos_multiples():
     ]
     
     print("📍 CASOS Y SUS UBICACIONES:")
-    print()
     
     # Procesar cada caso y mostrar el cálculo
     celdas_ocupadas = {}
@@ -260,9 +252,7 @@ def ejemplo_casos_multiples():
         print(f"   Color final: {color_desc} - {riesgo_desc}")
     
     # Casos especiales destacados
-    print("\n" + "🎯" * 20)
     print("CASOS ESPECIALES RESPONDIDOS:")
-    print("🎯" * 20)
     
     print("\n❓ '¿Qué pasa con 3 casos de VG en la misma celda?'")
     print("   ✅ Celda [2,1]: 3 VG = 3×3 = 9 puntos")
@@ -339,5 +329,7 @@ def ejemplo_casos_multiples():
 # Ejecutar el ejemplo
 if __name__ == "__main__":
     grafica_malla_real(homicidios)
+    matriz, matriz_clasificada, (q1, q2, q3, q4, q5)= algoritmo_malla()
+    
     matriz_ejemplo = ejemplo_casos_multiples()
     
