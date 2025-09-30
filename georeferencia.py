@@ -7,10 +7,11 @@ from shapely.geometry import Point, box
 
 # se usa OSMnx para geocodificar la ciudad de Cali y obtener sus límites 
 # administrativos como un GeoDataFram
+
 cali = ox.geocode_to_gdf("Santiago de Cali, Colombia")
 cali = cali.to_crs(3116)  # reproyectar a CRS en metros
 
-# Crear grilla de 50 m
+# Crear grilla de 250 m
 xmin, ymin, xmax, ymax = cali.total_bounds
 
 print(f"xmin: {xmin}, ymin: {ymin}, xmax: {xmax }, ymax: {ymax}")
@@ -82,11 +83,13 @@ print(f"Total de casos de feminicidio: {len(casos_feminicidio)}")
 
 # crea geometrías puntuales a partir de las coordenadas x/y
 geometry = [Point(lon, lat) for lon, lat in zip(df[lon_col], df[lat_col])]
+
 gdf_casos = gpd.GeoDataFrame(df, geometry=geometry, crs="EPSG:4326")
 # reproyecta los puntos al mismo sistema de la grilla
 gdf_casos = gdf_casos.to_crs(grid.crs)
 
 # realiza una unión espacial entre los casos y la grilla
+
 casos_con_celda = gpd.sjoin(gdf_casos, grid, how="left", predicate="within")
 # cuenta cuántos casos hay en cada celda
 conteo = casos_con_celda.groupby("index_right").size()
@@ -151,3 +154,4 @@ plt.xlabel("Coordenada X (metros)", fontsize=12)
 plt.ylabel("Coordenada Y (metros)", fontsize=12)
 plt.tight_layout()
 plt.show()
+
