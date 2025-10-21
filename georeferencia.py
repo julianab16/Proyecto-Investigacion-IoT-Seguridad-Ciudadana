@@ -11,17 +11,60 @@ from shapely.geometry import Point, box
 cali = ox.geocode_to_gdf("Santiago de Cali, Colombia", which_result=None)
 cali = cali.to_crs(3116)  # reproyectar a CRS en metros
 
-# Crear grilla de 250 m
+# Crear grilla de 
 xmin, ymin, xmax, ymax = cali.total_bounds
 
 print(f"xmin: {xmin}, ymin: {ymin}, xmax: {xmax }, ymax: {ymax}")
-cell_size = 250
-cols = np.arange(xmin, xmax, cell_size)
-rows = np.arange(ymin, ymax, cell_size)
 
-# crea celdas usando las coordenadas de esquinas
-polygons = [box(x, y, x+cell_size, y+cell_size) for x in cols for y in rows]
-print(f"Cantidad de celdas creadas: {len(polygons)}")
+# Crear grilla de hexágonos con lado = 500 m
+import math
+from shapely.geometry import Polygon
+
+lado_hex = 110.0  # lado del hexágono en metros
+# Para hexágonos "pointy-top": ancho = sqrt(3)*s, paso_x = ancho, paso_y = 1.5*s
+ancho_hex = math.sqrt(3) * lado_hex
+paso_x = ancho_hex
+paso_y = 1.5 * lado_hex
+
+xmin, ymin, xmax, ymax = cali.total_bounds
+# ampliar un poco para cubrir bordes
+xmin -= ancho_hex
+ymin -= lado_hex
+xmax += ancho_hex
+ymax += lado_hex
+
+centers = []
+x_vals = np.arange(xmin, xmax + paso_x, paso_x)
+y_vals = np.arange(ymin, ymax + paso_y, paso_y)
+
+for ix, x in enumerate(x_vals):
+    # desplazamiento vertical alternado por columna
+    y_offset = (paso_y / 2.0) if (ix % 2 == 1) else 0.0
+    for y in y_vals:
+        centers.append((x, y + y_offset))
+
+def hexagon(center_x, center_y, s):
+    """Crear hexágono regular (6 vértices) con lado s centrado en (center_x, center_y)."""
+    angles = [i * math.pi / 3.0 for i in range(6)]
+    coords = [(center_x + s * math.cos(a), center_y + s * math.sin(a)) for a in angles]
+    return Polygon(coords)
+
+try:
+    # usar union_all() (recomendado en versiones recientes)
+    area_cali = cali.geometry.union_all()
+except AttributeError:
+    # fallback para versiones antiguas de geopandas
+    area_cali = cali.geometry.unary_union
+
+# crear polígonos y filtrar solo los que intersectan el área de Cali
+polygons = []
+for cx, cy in centers:
+    poly = hexagon(cx, cy, lado_hex)
+    if poly.intersects(area_cali):
+        polygons.append(poly)
+
+print(f"Cantidad de hexágonos creados alrededor de Cali: {len(polygons)}")
+
 # crea un GeoDataFrame a partir de las celdas
 grid = gpd.GeoDataFrame(geometry=polygons, crs=cali.crs)
 
@@ -46,7 +89,6 @@ def limpiar_coordenadas_miles(df, lat_col='lat', lon_col='lon'):
 
 df = pd.read_csv("violencia-db/SEMANA.csv")
 
-
 if 'x' in df.columns and 'y' in df.columns:
     lat_col, lon_col = 'y', 'x'  # y=latitud, x=longitud
     print(f"Usando columnas: {lat_col} (latitud), {lon_col} (longitud)")
@@ -59,8 +101,8 @@ df = limpiar_coordenadas_miles(df, lat_col, lon_col)
 df = df.dropna(subset=[lat_col,lon_col])
 
 # ========== NUEVO SISTEMA DE ÍNDICE DE SEVERIDAD ==========
-nx, ny = cols, rows
-
+nx = len(x_vals)   # número de columnas de centros hex
+ny = len(y_vals)   # número de filas de centros hex
 # 1. Pesos de severidad (W) por tipo de delito
 pesos_severidad = {
     "Nivel 1": 1,  # Bajo
@@ -212,7 +254,7 @@ grid_cali["quintil"] = matriz_clasificada
 
 # Estadísticas de quintiles
 print(f"\nDistribución de celdas por quintil:")
-for i in range(1, 6):
+for i in range(1, 5):
     count = np.sum(matriz_clasificada == i)
     pct = (count / len(indices_array)) * 100 if len(indices_array) > 0 else 0
     print(f"Quintil {i}: {count:,} celdas ({pct:.1f}%)")
@@ -232,7 +274,7 @@ sm = plt.cm.ScalarMappable(cmap="inferno", norm=plt.Normalize(vmin=0, vmax=4))
 sm.set_array([])
 cbar = plt.colorbar(sm, ax=ax, label="Nivel de Riesgo", shrink=0.8)
 cbar.set_ticks([0, 1, 2, 3, 4])
-cbar.set_ticklabels(['Sin datos', 'Nivel 1', 'Nivel 2', 'Nivel 3', 'Nivel 4'])
+cbar.set_ticklabels(['Sin datos', 'Quintil 1', 'Quintil 2', 'Quintil 3', 'Quintil 4'])
 
 #dentro_cali.plot(ax=ax, color="blue", markersize=5)
 plt.title("Mapa de Calor de Seguridad - Clasificación por Quintiles\n(Colores ascendentes: Oscuro=Seguro, Claro=Peligroso)", fontsize=14, pad=20)
@@ -248,56 +290,11 @@ plt.show()
 # Reemplaza la sección de descarga de comunas (después del primer plt.show()) con esto:
 
 # Obtener las comunas de Cali usando OSMnx
-print("Descargando comunas de Cali...")
-try:
-    # Obtener el área de Cali
-    area_cali = cali.geometry.iloc[0]
-    
-    # Opción 1: Usar la función correcta según la versión de OSMnx
-    try:
-        # Para versiones más recientes de OSMnx
-        comunas = ox.features_from_polygon(area_cali, tags={'admin_level': '9'})
-    except AttributeError:
-        # Para versiones más antiguas
-        comunas = ox.geometries_from_polygon(area_cali, tags={'admin_level': '9'})
-    
-    # Si no funciona el nivel 9, intentar con nivel 8
-    if len(comunas) == 0:
-        try:
-            comunas = ox.features_from_polygon(area_cali, tags={'admin_level': '8'})
-        except AttributeError:
-            comunas = ox.geometries_from_polygon(area_cali, tags={'admin_level': '8'})
-    
-    # Si aún no hay resultados, intentar con boundary
-    if len(comunas) == 0:
-        try:
-            comunas = ox.features_from_polygon(area_cali, tags={'boundary': 'administrative'})
-        except AttributeError:
-            comunas = ox.geometries_from_polygon(area_cali, tags={'boundary': 'administrative'})
-    
-    # Filtrar solo polígonos
-    if len(comunas) > 0:
-        comunas = comunas[comunas.geometry.type.isin(['Polygon', 'MultiPolygon'])]
-        
-        # Reproyectar al mismo CRS
-        comunas = comunas.to_crs(cali.crs)
-        
-        print(f"Comunas descargadas: {len(comunas)}")
-        if len(comunas) > 0:
-            print("Columnas disponibles:", comunas.columns.tolist())
-    else:
-        print("No se encontraron comunas")
-        comunas = None
-    
-except Exception as e:
-    print(f"Error descargando comunas: {e}")
-    print(f"Versión de OSMnx: {ox.__version__}")
-    comunas = None
+
 
 # Alternativa: Usar geometrías de lugar si las anteriores fallan
-if comunas is None or len(comunas) == 0:
-    print("Intentando método alternativo...")
-    try:
+print("Intentando método alternativo...")
+try:
         # Buscar directamente por lugar
         comunas = ox.features_from_place("Santiago de Cali, Colombia", 
                                         tags={'admin_level': ['8', '9', '10']})
@@ -308,8 +305,7 @@ if comunas is None or len(comunas) == 0:
             print(f"Comunas encontradas con método alternativo: {len(comunas)}")
         else:
             comunas = None
-            
-    except Exception as e:
+except Exception as e:
         print(f"Error con método alternativo: {e}")
         comunas = None
 
@@ -335,7 +331,7 @@ sm = plt.cm.ScalarMappable(cmap="inferno", norm=plt.Normalize(vmin=0, vmax=4))
 sm.set_array([])
 cbar = plt.colorbar(sm, ax=ax, label="Nivel de Riesgo", shrink=0.8)
 cbar.set_ticks([0, 1, 2, 3, 4])
-cbar.set_ticklabels(['Sin datos', 'Nivel 1', 'Nivel 2', 'Nivel 3', 'Nivel 4'])
+cbar.set_ticklabels(['Sin datos', 'Quintil 1', 'Quintil 2', 'Quintil 3', 'Quintil 4'])
 
 titulo = "Mapa de Calor de Seguridad - Cali"
 if comunas is not None and len(comunas) > 0:
@@ -349,4 +345,3 @@ plt.show()
 
 # Mostrar versión de OSMnx para debug
 print(f"\nVersión de OSMnx: {ox.__version__}")
-
