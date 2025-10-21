@@ -10,10 +10,9 @@ from pymoo.termination import get_termination
 import pandas as pd
 import warnings
 warnings.filterwarnings('ignore')
-
 # 1Cargar y limpiar datos
 # -------------------------------------------------
-df = pd.read_csv("violencia-db/SEMANA.csv")
+df = pd.read_csv("..\Proyecto Investigacion IoT Seguridad Ciudadana\SEMANA.csv")
 
 def limpiar_coordenadas_miles(df, lat_col='lat', lon_col='lon'):
     """Limpia coordenadas con formato incorrecto"""
@@ -153,7 +152,7 @@ class OptimizacionMapaCalor(ElementwiseProblem):
             n_var=1,
             n_obj=3,  # 3 objetivos
             xl=np.array([50.0]),
-            xu=np.array([2000.0])
+            xu=np.array([500.0])
         )
     
     def _evaluate(self, x, out, *args, **kwargs):

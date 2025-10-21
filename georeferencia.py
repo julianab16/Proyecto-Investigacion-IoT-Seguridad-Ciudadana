@@ -87,7 +87,7 @@ def limpiar_coordenadas_miles(df, lat_col='lat', lon_col='lon'):
     
     return df
 
-df = pd.read_csv("violencia-db/SEMANA.csv")
+df = pd.read_csv("SEMANA.csv")
 
 if 'x' in df.columns and 'y' in df.columns:
     lat_col, lon_col = 'y', 'x'  # y=latitud, x=longitud
