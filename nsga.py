@@ -9,76 +9,102 @@ from pymoo.core.problem import ElementwiseProblem
 from pymoo.termination import get_termination
 import pandas as pd
 import warnings
+import glob
+import os
+
 warnings.filterwarnings('ignore')
-# 1Cargar y limpiar datos
-# -------------------------------------------------
-df = pd.read_csv("..\Proyecto Investigacion IoT Seguridad Ciudadana\SEMANA.csv")
 
-def limpiar_coordenadas_miles(df, lat_col='lat', lon_col='lon'):
-    """Limpia coordenadas con formato incorrecto"""
-    def limpiar_numero(numero):
-        numero_str = str(numero).strip()
-        numero_str = numero_str.replace(',', '')
-        
-        if numero_str.startswith("-7"):
-            numero_str = numero_str[0:3] + '.' + numero_str[3:]
-        elif numero_str.startswith("3"):
-            numero_str = numero_str[0:1] + '.' + numero_str[1:]
-        
-        try:
-            return float(numero_str)
-        except ValueError:
-            return np.nan
-    
-    df[lat_col] = df[lat_col].apply(limpiar_numero)
-    df[lon_col] = df[lon_col].apply(limpiar_numero)
-    return df
+print("=" * 70)
+print(" " * 15 + "OPTIMIZACIÓN DE TAMAÑO DE CELDA - NSGA-II")
+print("=" * 70)
 
-# Detectar columnas de coordenadas
-if 'x' in df.columns and 'y' in df.columns:
-    lon_col, lat_col = 'x', 'y'
-elif 'lon' in df.columns and 'lat' in df.columns:
-    lon_col, lat_col = 'lon', 'lat'
-else:
-    lon_candidates = [c for c in df.columns if 'lon' in c.lower() or 'long' in c.lower() or 'x' == c.lower()]
-    lat_candidates = [c for c in df.columns if 'lat' in c.lower() or 'y' == c.lower()]
-    if lon_candidates and lat_candidates:
-        lon_col = lon_candidates[0]
-        lat_col = lat_candidates[0]
+# ========== FUNCIONES DE CARGA ==========
+
+def cargar_csv(archivo):
+    """Carga y procesa un archivo CSV"""
+    try:
+        df = pd.read_csv(archivo, encoding='utf-8', on_bad_lines='skip')
+        if len(df) == 0:
+            return None
+        
+        df.columns = df.columns.str.strip().str.lower()
+        if 'x' not in df.columns or 'y' not in df.columns:
+            return None
+
+        # convertir a numérico y eliminar filas inválidas
+        df['x'] = pd.to_numeric(df['x'], errors='coerce')
+        df['y'] = pd.to_numeric(df['y'], errors='coerce')
+        df = df.dropna(subset=['x', 'y'])
+        if len(df) == 0:
+            return None
+        
+        if df is None or len(df) == 0:
+            return None
+        
+        return df
+    except:
+        return None
+
+# ========== CARGA DE DATOS ==========
+print("\n[1/4] Cargando archivos de delitos...")
+
+datasets = []
+archivos_a_buscar = [
+    'Hurtos_fiscalia.csv',
+    'Homicidios_fiscalia.csv'
+]
+
+archivos_cargados = 0
+for archivo in archivos_a_buscar:
+    if os.path.isfile(archivo):
+        df = cargar_csv(archivo)
+        if df is not None and len(df) > 0:
+            datasets.append(df)
+            print(f"  ✓ {archivo}: {len(df):,} registros")
+            archivos_cargados += 1
     else:
-        raise SystemExit("No se encontraron columnas de coordenadas.")
+        print(f"  - Ignorado (no existe): {archivo}")
 
-df = limpiar_coordenadas_miles(df, lat_col=lat_col, lon_col=lon_col)
-df = df.dropna(subset=[lat_col, lon_col])
-print(f"Puntos válidos: {len(df)}")
+# También buscar cualquier otro CSV en la carpeta
 
-# Obtener límites de Cali y reproyectar
-# -------------------------------------------------
+if archivos_cargados == 0:
+    print("\n✗ ERROR: No se encontró ningún archivo CSV válido")
+    exit()
+
+# Combinar todos los datasets
+df = pd.concat(datasets, ignore_index=True)
+print(f"\n✓ Total combinado: {len(df):,} registros")
+
+# ========== CARGAR MAPA DE CALI ==========
+print("\n[2/4] Cargando límites de Cali...")
 cali = ox.geocode_to_gdf("Santiago de Cali, Colombia")
 cali = cali.to_crs(3116)  # CRS métrico para Colombia
 
-# Crear GeoDataFrame de puntos
-puntos = gpd.GeoDataFrame(
-    df, 
-    geometry=gpd.points_from_xy(df[lon_col], df[lat_col]), 
-    crs="EPSG:4326"
-)
-puntos = puntos.to_crs(3116)
-
-# Filtrar puntos dentro de Cali
 try:
     area_cali = cali.geometry.union_all()
 except AttributeError:
     area_cali = cali.geometry.unary_union
 
+print("✓ Mapa de Cali cargado")
+
+# ========== CREAR GEODATAFRAME ==========
+print("\n[3/4] Georeferenciando puntos...")
+puntos = gpd.GeoDataFrame(
+    df, 
+    geometry=gpd.points_from_xy(df['x'], df['y']), 
+    crs="EPSG:4326"
+)
+puntos = puntos.to_crs(3116)
+
+# Filtrar puntos dentro de Cali
 puntos = puntos[puntos.within(area_cali)]
-print(f"Puntos dentro de Cali: {len(puntos)}")
+print(f"✓ Puntos dentro de Cali: {len(puntos):,}")
 
 if len(puntos) == 0:
-    raise SystemExit("No hay puntos dentro de Cali después del filtrado.")
+    print("✗ ERROR: No hay puntos dentro de Cali")
+    exit()
 
-# Función de cálculo de métricas
-# -------------------------------------------------
+# ========== FUNCIONES DE OPTIMIZACIÓN ==========
 def calcular_metricas(puntos_gdf, cali_gdf, h_m):
     """
     Calcula métricas para optimización:
@@ -96,7 +122,6 @@ def calcular_metricas(puntos_gdf, cali_gdf, h_m):
     for x in x_coords[:-1]:
         for y in y_coords[:-1]:
             celda = box(x, y, x + h_m, y + h_m)
-            # Solo incluir celdas que intersectan con Cali
             if celda.intersects(area_cali):
                 celdas.append(celda)
     
@@ -114,71 +139,62 @@ def calcular_metricas(puntos_gdf, cali_gdf, h_m):
     conteo_completo[conteo.index] = conteo.values
     
     # Calcular métricas
-    # f1: Varianza de densidad (normalizada por área)
+    # f1: Varianza de densidad
     densidad = conteo_completo / (h_m**2 / 1e6)  # eventos por km²
     varianza = float(np.var(densidad))
     
-    # f2: Número de celdas (costo computacional)
+    # f2: Número de celdas
     num_celdas = float(len(grid))
     
     # f3: Porcentaje de celdas vacías
     pct_vacias = float((conteo_completo == 0).sum() / len(grid) * 100)
     
-    # Penalizar si hay muy pocas celdas con datos o demasiadas vacías
+    # Penalizar configuraciones no óptimas
     if pct_vacias > 80:
-        varianza *= 2  # Penalización
+        varianza *= 2
     
-    # Calcular eventos promedio por celda
     eventos_por_celda = len(puntos_gdf) / num_celdas
-    
-    # Penalizar si hay menos de 3 eventos por celda en promedio
     if eventos_por_celda < 3:
         varianza *= 1.5
     
     return varianza, num_celdas, pct_vacias
 
-# Definir problema de optimización
-# -------------------------------------------------
+# ========== PROBLEMA DE OPTIMIZACIÓN ==========
 class OptimizacionMapaCalor(ElementwiseProblem):
     """
-    Optimización multi-objetivo para tamaño de celda:
-    - Minimizar varianza de densidad (homogeneidad)
-    - Minimizar número de celdas (eficiencia)
-    - Minimizar celdas vacías (calidad)
+    Optimización multi-objetivo para tamaño de celda
     """
     def __init__(self):
-        # Rango de tamaño de celda: 50m a 2000m
         super().__init__(
             n_var=1,
-            n_obj=3,  # 3 objetivos
-            xl=np.array([50.0]),
-            xu=np.array([500.0])
+            n_obj=3,
+            xl=np.array([40.0]),   # Mínimo: 50m
+            xu=np.array([150.0])   # Máximo: 500m
         )
     
     def _evaluate(self, x, out, *args, **kwargs):
         h = float(x[0])
         varianza, num_celdas, pct_vacias = calcular_metricas(puntos, cali, h)
         
-        # Normalizar objetivos para mejor convergencia
-        f1 = varianza / 1000  # Varianza normalizada
-        f2 = num_celdas / 100  # Número de celdas normalizado
-        f3 = pct_vacias  # Porcentaje de vacías
+        # Normalizar objetivos
+        f1 = varianza / 1000
+        f2 = num_celdas / 100
+        f3 = pct_vacias
         
         out["F"] = np.array([f1, f2, f3], dtype=float)
 
-# Ejecutar NSGA-II
-# -------------------------------------------------
-print("\nEjecutando optimización NSGA-II...")
+# ========== EJECUTAR NSGA-II ==========
+print("\n[4/4] Ejecutando optimización NSGA-II...")
 print("Esto puede tomar varios minutos...\n")
 
 problem = OptimizacionMapaCalor()
 
 algorithm = NSGA2(
-    pop_size=50,  # Población más grande para mejor exploración
+    pop_size=50,
     eliminate_duplicates=True
 )
 
-termination = get_termination("n_gen", 80)  # 80 generaciones
+termination = get_termination("n_gen", 10)
 
 res = minimize(
     problem,
@@ -189,23 +205,17 @@ res = minimize(
     save_history=False
 )
 
-# Analizar y visualizar resultados
-# -------------------------------------------------
-print("\n" + "="*60)
+# ========== ANALIZAR RESULTADOS ==========
+print("\n" + "=" * 70)
 print("RESULTADOS DE OPTIMIZACIÓN")
-print("="*60)
+print("=" * 70)
 
-F = res.F
 X = res.X
+F = res.F
 
-# Desnormalizar para mostrar
-F_real = F.copy()
-F_real[:, 0] *= 1000  # Varianza real
-F_real[:, 1] *= 100   # Número de celdas real
-
-# Calcular métricas adicionales para cada solución
+# Calcular métricas detalladas para cada solución
 resultados = []
-for i, h in enumerate(X[:, 0]):
+for h in X[:, 0]:
     var, n_celdas, pct_vac = calcular_metricas(puntos, cali, h)
     eventos_por_celda = len(puntos) / n_celdas
     resultados.append({
@@ -216,29 +226,138 @@ for i, h in enumerate(X[:, 0]):
         'eventos_x_celda': eventos_por_celda
     })
 
-# Ordenar por eventos por celda (métrica de calidad)
 resultados_df = pd.DataFrame(resultados)
 resultados_df = resultados_df.sort_values('eventos_x_celda', ascending=False)
 
-print("\nTOP 10 SOLUCIONES ÓPTIMAS:")
-print("-" * 90)
-print(f"{'Tamaño':<12} {'N° Celdas':<12} {'Eventos/Celda':<15} {'% Vacías':<12} {'Varianza':<12}")
-print("-" * 90)
-for _, row in resultados_df.head(10).iterrows():
+print("\nTOP 15 SOLUCIONES ÓPTIMAS:")
+print("-" * 100)
+print(f"{'Tamaño':<12} {'N° Celdas':<12} {'Eventos/Celda':<18} {'% Vacías':<12} {'Varianza':<15}")
+print("-" * 100)
+for _, row in resultados_df.head(15).iterrows():
     print(f"{row['h']:>7.1f} m    {row['n_celdas']:>8}    "
-          f"{row['eventos_x_celda']:>11.2f}      {row['pct_vacias']:>8.1f}%    "
-          f"{row['varianza']:>10.2f}")
+          f"{row['eventos_x_celda']:>13.2f}      {row['pct_vacias']:>8.1f}%    "
+          f"{row['varianza']:>12.2f}")
 
-# Encontrar la solución más balanceada
-mejor_idx = resultados_df['eventos_x_celda'].sub(7).abs().idxmin()
-mejor = resultados_df.loc[mejor_idx]
+# ========== SELECCIONAR MEJOR SOLUCIÓN ==========
+# Criterios de selección balanceados:
+# 1. Entre 5-15 eventos por celda (óptimo para visualización)
+# 2. Menos del 70% de celdas vacías
+# 3. Número de celdas razonable (no demasiadas ni muy pocas)
 
-print("\n" + "="*60)
-print("RECOMENDACIÓN ÓPTIMA:")
-print("="*60)
+# Filtrar soluciones válidas
+validas = resultados_df[
+    (resultados_df['eventos_x_celda'] >= 5) & 
+    (resultados_df['eventos_x_celda'] <= 15) &
+    (resultados_df['pct_vacias'] < 70)
+]
+
+if len(validas) == 0:
+    # Si no hay soluciones que cumplan criterios estrictos, relajar
+    validas = resultados_df[
+        (resultados_df['eventos_x_celda'] >= 3) & 
+        (resultados_df['pct_vacias'] < 75)
+    ]
+
+if len(validas) > 0:
+    # Elegir la que tenga eventos/celda más cercano a 8 (valor ideal)
+    mejor_idx = validas['eventos_x_celda'].sub(8).abs().idxmin()
+    mejor = validas.loc[mejor_idx]
+else:
+    # Fallback: mejor por eventos/celda
+    mejor_idx = resultados_df['eventos_x_celda'].idxmax()
+    mejor = resultados_df.loc[mejor_idx]
+
+print("\n" + "=" * 70)
+print("★ RECOMENDACIÓN ÓPTIMA ★")
+print("=" * 70)
 print(f"Tamaño de celda:     {mejor['h']:.1f} metros")
-print(f"Número de celdas:    {mejor['n_celdas']}")
+print(f"Número de celdas:    {mejor['n_celdas']:,}")
 print(f"Eventos por celda:   {mejor['eventos_x_celda']:.2f}")
 print(f"Celdas vacías:       {mejor['pct_vacias']:.1f}%")
 print(f"Varianza:            {mejor['varianza']:.2f}")
-print("="*60)
+print("=" * 70)
+
+# ========== ANÁLISIS ADICIONAL ==========
+print("\nANÁLISIS COMPARATIVO:")
+print("-" * 70)
+
+# Comparar con tamaños estándar
+tamaños_referencia = [50, 100, 110, 150, 200, 250, 300, 400, 500]
+print(f"{'Tamaño':<12} {'N° Celdas':<12} {'Eventos/Celda':<18} {'% Vacías':<12}")
+print("-" * 70)
+
+for tam in tamaños_referencia:
+    var, n_celdas, pct_vac = calcular_metricas(puntos, cali, tam)
+    eventos = len(puntos) / n_celdas
+    marca = " ← ÓPTIMO" if abs(tam - mejor['h']) < 20 else ""
+    print(f"{tam:>7.0f} m    {int(n_celdas):>8,}    "
+          f"{eventos:>13.2f}      {pct_vac:>8.1f}%{marca}")
+
+# ========== VISUALIZACIÓN ==========
+print("\n[5/5] Generando visualización comparativa...")
+
+fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+
+# Gráfico 1: Frente de Pareto (Varianza vs Número de celdas)
+ax1 = axes[0, 0]
+scatter1 = ax1.scatter(F[:, 1] * 100, F[:, 0] * 1000, 
+                       c=F[:, 2], cmap='RdYlGn_r', s=100, alpha=0.7)
+ax1.set_xlabel('Número de Celdas', fontsize=11)
+ax1.set_ylabel('Varianza de Densidad', fontsize=11)
+ax1.set_title('Frente de Pareto: Varianza vs N° Celdas', fontsize=12, weight='bold')
+plt.colorbar(scatter1, ax=ax1, label='% Celdas Vacías')
+ax1.grid(True, alpha=0.3)
+
+# Gráfico 2: Tamaño vs Eventos por celda
+ax2 = axes[0, 1]
+ax2.scatter(resultados_df['h'], resultados_df['eventos_x_celda'], 
+            c=resultados_df['pct_vacias'], cmap='RdYlGn_r', s=100, alpha=0.7)
+ax2.axhline(y=8, color='red', linestyle='--', label='Ideal (8 eventos/celda)')
+ax2.axvline(x=mejor['h'], color='green', linestyle='--', linewidth=2, 
+            label=f'Óptimo ({mejor["h"]:.0f}m)')
+ax2.set_xlabel('Tamaño de Celda (metros)', fontsize=11)
+ax2.set_ylabel('Eventos por Celda', fontsize=11)
+ax2.set_title('Tamaño de Celda vs Densidad de Eventos', fontsize=12, weight='bold')
+ax2.legend()
+ax2.grid(True, alpha=0.3)
+
+# Gráfico 3: Tamaño vs % Celdas vacías
+ax3 = axes[1, 0]
+ax3.plot(resultados_df['h'], resultados_df['pct_vacias'], 'o-', 
+         markersize=8, linewidth=2, color='steelblue')
+ax3.axvline(x=mejor['h'], color='green', linestyle='--', linewidth=2,
+            label=f'Óptimo ({mejor["h"]:.0f}m)')
+ax3.axhline(y=70, color='red', linestyle='--', alpha=0.5, label='Límite aceptable')
+ax3.set_xlabel('Tamaño de Celda (metros)', fontsize=11)
+ax3.set_ylabel('% Celdas Vacías', fontsize=11)
+ax3.set_title('Tamaño de Celda vs Celdas Vacías', fontsize=12, weight='bold')
+ax3.legend()
+ax3.grid(True, alpha=0.3)
+
+# Gráfico 4: Tamaño vs Número de celdas
+ax4 = axes[1, 1]
+ax4.plot(resultados_df['h'], resultados_df['n_celdas'], 's-', 
+         markersize=8, linewidth=2, color='darkorange')
+ax4.axvline(x=mejor['h'], color='green', linestyle='--', linewidth=2,
+            label=f'Óptimo ({mejor["h"]:.0f}m)')
+ax4.set_xlabel('Tamaño de Celda (metros)', fontsize=11)
+ax4.set_ylabel('Número de Celdas', fontsize=11)
+ax4.set_title('Tamaño de Celda vs Número Total de Celdas', fontsize=12, weight='bold')
+ax4.legend()
+ax4.grid(True, alpha=0.3)
+
+plt.suptitle(f'Optimización Multi-Objetivo - Tamaño Óptimo: {mejor["h"]:.0f}m', 
+             fontsize=14, weight='bold', y=0.995)
+plt.tight_layout()
+plt.show()
+
+print("\n" + "=" * 70)
+print("✓ OPTIMIZACIÓN COMPLETADA")
+print("=" * 70)
+print(f"\nResumen:")
+print(f"  • Total de eventos analizados: {len(puntos):,}")
+print(f"  • Soluciones exploradas: {len(resultados_df)}")
+print(f"  • Tamaño óptimo de celda: {mejor['h']:.1f} metros")
+print(f"  • Cobertura del mapa: {100 - mejor['pct_vacias']:.1f}%")
+print("\nUsa este valor en tu código de georeferenciación:")
+print(f"  LADO_HEX = {mejor['h']:.1f}  # metros\n")
