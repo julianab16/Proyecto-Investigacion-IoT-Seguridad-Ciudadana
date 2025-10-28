@@ -8,10 +8,10 @@ import math
 from shapely.geometry import Polygon
 import warnings
 warnings.filterwarnings('ignore')
-from sclim import mejorcelda
-print("Mejor celda:", mejorcelda)
+#from sclim import mejorcelda
+#print("Mejor celda:", mejorcelda)
 # ========== CONFIGURACIÓN ==========
-LADO_HEX = mejorcelda  # lado del hexágono en metros
+LADO_HEX = 123.45   # lado del hexágono en metros
 
 print("=" * 70)
 print(" " * 15 + "MAPA DE CALOR DE SEGURIDAD - CALI")
@@ -190,6 +190,10 @@ datasets = []
 archivos_especificos = [
     ('Hurtos_fiscalia.csv', 'Hurto'),
     ('Homicidios_fiscalia.csv', 'Homicidio'),
+    ('Delitos_Sexuales_fiscalia.csv', 'Delito Sexual'),
+    ('Extorsion_fiscalia.csv', 'Extorsion'),
+    ('Lesiones_fiscalia.csv', 'Lesiones'),
+    ('Violencia_Intrafamiliar_fiscalia.csv', 'Violencia Intrafamiliar'),
 ]
 
 print(f"\nBuscando archivos CSV...")
@@ -248,7 +252,17 @@ df["nivel_agrupado"] = df["nivel_severidad"].apply(extraer_nivel_severidad)
 casos_sin_nivel = df["nivel_agrupado"].isna().sum()
 if casos_sin_nivel > 0:
     print(f"  ⚠ {casos_sin_nivel:,} casos sin nivel válido (excluidos)")
+
     df = df[df["nivel_agrupado"].notna()].copy()
+
+    cols_show = ['archivo_fuente', 'categoria', 'tipo_delito', 'nivel_severidad', 'x', 'y']
+    cols_show = [c for c in cols_show if c in df.columns]
+
+    print("\n  Ejemplos (hasta 10) de casos sin nivel válido:")
+    if len(df) > 0:
+        print(df[cols_show].head(10).to_string(index=False))
+    else:
+        print("  (ninguno)")
 
 if len(df) == 0:
     print("\n✗ ERROR: No hay casos con nivel de severidad válido")
@@ -287,15 +301,25 @@ print(f"  • Casos dentro de Cali: {len(dentro):,}")
 if fuera > 0:
     print(f"  • Casos fuera: {fuera:,}")
 
+grid = grid.reset_index(drop=False).rename(columns={'index':'grid_id'})
+
 casos_con_celda = gpd.sjoin(gdf_casos, grid, how="left", predicate="within")
+frecuencia_df = casos_con_celda.groupby("grid_id").size().rename("frecuencia").reset_index()
+peso_promedio_df = casos_con_celda.groupby("grid_id")["peso_severidad"].mean().rename("peso_promedio").reset_index()
+grid = grid.merge(frecuencia_df, on="grid_id", how="left")
+grid = grid.merge(peso_promedio_df, on="grid_id", how="left")
+grid["frecuencia"] = grid["frecuencia"].fillna(0).astype(int)
+grid["peso_promedio"] = grid["peso_promedio"].fillna(0.0)
+
 print(f"  ✓ Casos asignados a hexágonos")
 
 # ========== CÁLCULO DE ÍNDICE ==========
 def mapear_frecuencia(freq):
     if freq == 0: return 0
-    elif freq == 1: return 1
-    elif 2 <= freq <= 5: return 3.5
-    elif 6 <= freq <= 12: return 9
+    elif 1 <= freq <= 3: return 1
+    elif 4 <= freq <= 6: return 3.5
+    elif 7 <= freq <= 9: return 5.5
+    elif 10 <= freq <= 14: return 9
     else: return 15
 
 frecuencia_por_celda = casos_con_celda.groupby("index_right").size()
@@ -310,16 +334,12 @@ for celda_id in frecuencia_por_celda.index:
 
 indice_severidad_celda = (indice_final_celda / 90) * 100  # 90 = 15*6 (máximo posible)
 
-grid["frecuencia"] = grid.index.map(frecuencia_por_celda).fillna(0)
-grid["peso_promedio"] = grid.index.map(peso_promedio_celda).fillna(0)
-grid["indice_severidad"] = grid.index.map(indice_severidad_celda).fillna(0)
-grid["casos"] = grid["frecuencia"]
-
-print(f"\n  Estadísticas de celdas:")
-print(f"    • Con casos: {len(grid[grid['frecuencia'] > 0]):,}")
-print(f"    • Alta concentración (>12 casos): {len(grid[grid['frecuencia'] > 12]):,}")
+grid["indice_final"] = grid["frecuencia"].apply(mapear_frecuencia) * grid["peso_promedio"]
+grid["indice_severidad"] = (grid["indice_final"] / (15*6)) * 100
+grid["indice_severidad"] = grid["indice_severidad"].fillna(0)
 
 grid_cali = gpd.overlay(grid, cali, how="intersection")
+grid_cali["casos"] = grid_cali["frecuencia"] 
 
 # ========== QUINTILES ==========
 indices = grid_cali["indice_severidad"].values
@@ -348,11 +368,43 @@ if np.any(indices > 0):
 grid_cali["quintil"] = clasificacion
 
 # ========== VISUALIZACIÓN ==========
-print("\n[6/6] Generando mapa...")
-fig, ax = plt.subplots(figsize=(16, 14))
+import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
+import osmnx as ox
 
+print("\n[6/6] Generando mapa...")
+
+# Diagnóstico después de: casos_con_celda = gpd.sjoin(...)
+print("DEBUG: registros CSV combinados:", len(df))
+print("DEBUG: puntos geocodificados:", len(gdf_casos))
+print("DEBUG: dentro de Cali:", len(dentro))
+print("DEBUG: sjoin total:", len(casos_con_celda))
+print("DEBUG: sjoin index_right nulos:", casos_con_celda['index_right'].isna().sum())
+
+# Ver ejemplos de filas sin index_right (no asignadas a ninguna celda)
+print("\nEjemplos sin index_right (5):")
+print(casos_con_celda[casos_con_celda['index_right'].isna()].head(5)[['archivo_fuente','x','y','nivel_severidad']].to_string(index=False))
+
+# Mostrar resumen de frecuencia y suma vs casos asignados
+frecuencia_por_celda = casos_con_celda.groupby("index_right").size()
+print("\nFrecuencia por celda (head):")
+print(frecuencia_por_celda.head(10))
+print("Suma frecuencias (casos asignados por sjoin):", frecuencia_por_celda.sum())
+print("Casos originales dentro de Cali:", len(dentro))
+
+print(f"\n  Estadísticas de celdas:")
+print(f"    • Total Celdas: {len(grid)}")
+print(f"    • Con casos: {len(grid[grid['frecuencia'] > 0]):,}")
+print(f"    • Sin casos: {len(grid[grid['frecuencia'] == 0]):,}")
+print(f"    • Alta concentración (>15 casos): {len(grid[grid['frecuencia'] > 15]):,}")
+print(f"     \n")
+
+fig, ax = plt.subplots(figsize=(9, 8))
+
+# Mapa base
 cali.plot(ax=ax, color="white", edgecolor="black", linewidth=2.5, zorder=1)
 
+# Limites administrativos
 try:
     comunas = ox.features_from_place("Santiago de Cali, Colombia", 
                                     tags={'admin_level': ['8', '9', '10']})
@@ -360,40 +412,113 @@ try:
         comunas = comunas[comunas.geometry.type.isin(['Polygon', 'MultiPolygon'])]
         comunas = comunas.to_crs(cali.crs)
         comunas.plot(ax=ax, color="none", edgecolor="gray", linewidth=0.8, 
-                    alpha=0.5, linestyle='--', zorder=2)
+                     alpha=0.5, linestyle='--', zorder=2)
         print("  ✓ Límites administrativos")
-except:
-    pass
+except Exception as e:
+    print("  ⚠️ No se pudieron cargar comunas:", e)
 
-grid_cali.plot(ax=ax, column="quintil", cmap="inferno", 
-               alpha=0.65, edgecolor=None, vmin=0, vmax=5, zorder=3)
+# 🎨 Definir el colormap tipo semáforo
+# blanco (sin datos), verde, azul, naranja, rojo (máximo)
+colors = ["white", "green", "blue", "orange", "red"]
+cmap = mcolors.LinearSegmentedColormap.from_list("semaforo", colors, N=5)
 
-sm = plt.cm.ScalarMappable(cmap="inferno", norm=plt.Normalize(vmin=0, vmax=5))
+# Graficar la cuadrícula con el nuevo colormap
+grid_cali.plot(ax=ax, column="quintil", cmap=cmap,
+               alpha=0.75, edgecolor=None, vmin=0, vmax=5, zorder=3)
+
+# Barra de color personalizada
+sm = plt.cm.ScalarMappable(cmap=cmap, norm=plt.Normalize(vmin=0, vmax=5))
 sm.set_array([])
 cbar = plt.colorbar(sm, ax=ax, label="Nivel de Riesgo", shrink=0.75)
 cbar.set_ticks([0, 1, 2, 3, 4, 5])
-cbar.set_ticklabels(['Sin datos', 'Q1\nMuy Bajo', 'Q2\nBajo', 
-                     'Q3\nMedio', 'Q4\nAlto', 'Q5\nMuy Alto'])
+cbar.set_ticklabels([
+    'Sin datos', 'Q1\nMuy Bajo', 'Q2\nBajo',
+    'Q3\nMedio', 'Q4\nAlto', 'Q5\nMuy Alto'
+])
 
-plt.title(f"Mapa de Calor de Seguridad - Santiago de Cali\n({len(df):,} delitos georeferenciados - 2023)", 
+# Título y etiquetas
+plt.title(f"Mapa de Calor de Seguridad - Santiago de Cali", 
           fontsize=15, pad=20, weight='bold')
 plt.xlabel("Coordenada X (metros)", fontsize=11)
 plt.ylabel("Coordenada Y (metros)", fontsize=11)
 
-stats = f"Índice Promedio: {grid_cali['indice_severidad'].mean():.1f}\n"
-stats += f"Zona Crítica: {grid_cali['indice_severidad'].max():.1f}"
+# Estadísticas resumen
+if grid_cali.empty or grid_cali['casos'].isna().all():
+    print("No hay datos de casos.")
+else:
+    max_idx = grid_cali['casos'].idxmax()
+    max_val = int(grid_cali.loc[max_idx, 'casos'] or 0)
+    poly = grid_cali.loc[max_idx, 'geometry']
+    centroid = poly.centroid
+    pct_total = (max_val / grid_cali['casos'].sum() * 100) if grid_cali['casos'].sum() > 0 else 0
+    print(f"Celda {max_idx}: {max_val} casos (centro: {centroid.x:.2f}, {centroid.y:.2f}) — {pct_total:.1f}% del total")
+
+median = grid_cali['casos'].median()
+median_activas = grid_cali.loc[grid_cali['casos'] > 0, 'casos'].median()
+mean = grid_cali['casos'].mean()
+maxv = grid_cali['casos'].max()
+active_count = (grid_cali['casos']>0).sum()
+noactivecount = (grid_cali['casos']==0).sum()
+stats = (f"Índice Promedio: {grid_cali['casos'].mean():.1f}\n"
+         f"Mediana: {median_activas:.1f}\n"
+         f"Máximo: {maxv:.1f}\n"
+         f"Promedio: {mean:.1f}\n"
+         f"Celdas activas: {active_count:,}\n"
+         f"Celdas no activas: {noactivecount:,}\n")
+max_idx = grid_cali['casos'].idxmax()
+centroid = grid_cali.loc[max_idx].geometry.centroid
+max_val = int(grid_cali.loc[max_idx, 'casos'])
+poly = grid_cali.loc[max_idx, 'geometry']
+centroid = poly.centroid
+print(f"Celda con más casos -> index: {max_idx}, casos: {max_val}")
+print(f"Centroide -> x: {centroid.x:.2f}, y: {centroid.y:.2f}")
+total_casos = int(grid_cali['casos'].sum())
+celdas_con_casos = int((grid_cali['casos'] > 0).sum())
+total_celdas = int(len(grid_cali))
+
+print(f"Total casos asignados a celdas: {total_casos:,}")
+print(f"Celdas con al menos 1 caso: {celdas_con_casos:,} de {total_celdas:,}")
+
+# opcional: ver el polígono (coordenadas de los vértices)
+print("Polígono (vértices):", list(poly.exterior.coords))
+# opcional: ver todas las columnas de esa celda
+print(grid_cali.loc[max_idx])
 plt.text(0.02, 0.98, stats, transform=ax.transAxes, fontsize=10,
          verticalalignment='top', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
 
 plt.tight_layout()
 plt.show()
 
-print("\n" + "=" * 70)
-print("✓ PROCESO COMPLETADO EXITOSAMENTE")
-print("=" * 70)
-print(f"\nResumen:")
-print(f"  • Archivos procesados: {archivos_encontrados}")
-print(f"  • Total de delitos: {len(df):,}")
-print(f"  • Hexágonos activos: {len(grid_cali[grid_cali['casos'] > 0]):,}")
-print(f"  • Índice promedio: {grid_cali['indice_severidad'].mean():.2f}")
-print(f"  • Zona más crítica: {grid_cali['indice_severidad'].max():.2f}\n")
+
+# 1) Intentar seleccionar por pertenencia espacial (más robusto)
+casos_en_celda = gdf_casos[gdf_casos.within(poly)].copy()
+
+# 2) Si no encuentra nada, intentar por columnas añadidas por el sjoin ('grid_id' o 'index_right')
+if len(casos_en_celda) == 0:
+    gid = grid_cali.loc[max_idx].get('grid_id', None)
+    mask = pd.Series(False, index=casos_con_celda.index)
+    if gid is not None:
+        mask = mask | (casos_con_celda.get('grid_id') == gid)
+    mask = mask | (casos_con_celda.get('index_right') == max_idx)
+    casos_en_celda = casos_con_celda[mask].copy()
+
+# Mostrar detalles y listar los casos pertenecientes a la celda con más casos
+max_idx = grid_cali['casos'].idxmax()
+poly = grid_cali.loc[max_idx, 'geometry']
+print(f"\nCelda con más casos -> index: {max_idx}, casos: {int(grid_cali.loc[max_idx,'casos'])}")
+# ...existing code...
+from pathlib import Path
+# ...existing code...
+# Mostrar resumen y ejemplos
+total = len(casos_en_celda)
+print(f"Total de casos en la celda: {total:,}")
+if total > 0:
+    cols_show = [c for c in ['archivo_fuente','categoria','tipo_delito','nivel_severidad','nivel_agrupado','peso_severidad','x','y','geometry'] if c in casos_en_celda.columns]
+    print("\nEjemplos (hasta 20) de casos en la celda:")
+    print(casos_en_celda[cols_show].head(20).to_string(index=False))
+    # Guardar detalle a CSV para revisión
+    out = Path(__file__).resolve().parent / f"casos_celda_{max_idx}.csv"
+    casos_en_celda.to_csv(out, index=False, encoding='utf-8')
+    print(f"\nDetalle guardado en: {out}")
+else:
+    print("No se encontraron casos asociados a la celda (revisar CRS / sjoin).")
