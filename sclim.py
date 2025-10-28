@@ -49,7 +49,11 @@ print("\n[1/5] Cargando archivos de delitos...")
 datasets = []
 archivos_a_buscar = [
     'Hurtos_fiscalia.csv',
-    'Homicidios_fiscalia.csv'
+    'Homicidios_fiscalia.csv',
+    'Delitos_Sexuales_fiscalia.csv',
+    'Extorsion_fiscalia.csv',
+    'Lesiones_fiscalia.csv',
+    'Violencia_Intrafamiliar_fiscalia.csv',
 ]
 
 archivos_cargados = 0
@@ -247,7 +251,7 @@ def funcion_objetivo_compuesta(h):
     return score_total
 
 # ========== ESPACIO DE BÚSQUEDA ==========
-space = [Real(50.0, 150.0, name='h')]
+space = [Real(50.0, 130.0, name='h')]
 
 @use_named_args(space)
 def objetivo_wrapper(h):
