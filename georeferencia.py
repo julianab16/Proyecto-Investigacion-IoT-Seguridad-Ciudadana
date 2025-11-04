@@ -190,10 +190,10 @@ datasets = []
 archivos_especificos = [
     ('Hurtos_fiscalia.csv', 'Hurto'),
     ('Homicidios_fiscalia.csv', 'Homicidio'),
-    ('Delitos_Sexuales_fiscalia.csv', 'Delito Sexual'),
-    ('Extorsion_fiscalia.csv', 'Extorsion'),
-    ('Lesiones_fiscalia.csv', 'Lesiones'),
+    ('Delitos_Sexuales_fiscalia.csv', 'Delitos Sexuales'),
+    ('Lesiones_fiscalia.csv', 'Lesiones Personales'),
     ('Violencia_Intrafamiliar_fiscalia.csv', 'Violencia Intrafamiliar'),
+    ('Extorsion_fiscalia.csv', 'Extorsion')
 ]
 
 print(f"\nBuscando archivos CSV...")
@@ -374,13 +374,6 @@ import osmnx as ox
 
 print("\n[6/6] Generando mapa...")
 
-# Diagnóstico después de: casos_con_celda = gpd.sjoin(...)
-print("DEBUG: registros CSV combinados:", len(df))
-print("DEBUG: puntos geocodificados:", len(gdf_casos))
-print("DEBUG: dentro de Cali:", len(dentro))
-print("DEBUG: sjoin total:", len(casos_con_celda))
-print("DEBUG: sjoin index_right nulos:", casos_con_celda['index_right'].isna().sum())
-
 # Ver ejemplos de filas sin index_right (no asignadas a ninguna celda)
 print("\nEjemplos sin index_right (5):")
 print(casos_con_celda[casos_con_celda['index_right'].isna()].head(5)[['archivo_fuente','x','y','nivel_severidad']].to_string(index=False))
@@ -457,14 +450,16 @@ median = grid_cali['casos'].median()
 median_activas = grid_cali.loc[grid_cali['casos'] > 0, 'casos'].median()
 mean = grid_cali['casos'].mean()
 maxv = grid_cali['casos'].max()
+sum  = grid_cali['casos'].sum()
 active_count = (grid_cali['casos']>0).sum()
 noactivecount = (grid_cali['casos']==0).sum()
 stats = (f"Índice Promedio: {grid_cali['casos'].mean():.1f}\n"
          f"Mediana: {median_activas:.1f}\n"
          f"Máximo: {maxv:.1f}\n"
          f"Promedio: {mean:.1f}\n"
-         f"Celdas activas: {active_count:,}\n"
-         f"Celdas no activas: {noactivecount:,}\n")
+         f"sum: {sum:,}\n"
+         f"Celdas con casos: {active_count:,}\n"
+         f"Celdas sin casos: {noactivecount:,}\n")
 max_idx = grid_cali['casos'].idxmax()
 centroid = grid_cali.loc[max_idx].geometry.centroid
 max_val = int(grid_cali.loc[max_idx, 'casos'])
@@ -476,8 +471,8 @@ total_casos = int(grid_cali['casos'].sum())
 celdas_con_casos = int((grid_cali['casos'] > 0).sum())
 total_celdas = int(len(grid_cali))
 
-print(f"Total casos asignados a celdas: {total_casos:,}")
-print(f"Celdas con al menos 1 caso: {celdas_con_casos:,} de {total_celdas:,}")
+print(f"Total casos asignados a celdas: {total_casos:,}\n")
+print(f"Celdas con al menos 1 caso: {celdas_con_casos:,} de {total_celdas:,}\n")
 
 # opcional: ver el polígono (coordenadas de los vértices)
 print("Polígono (vértices):", list(poly.exterior.coords))
@@ -514,8 +509,6 @@ total = len(casos_en_celda)
 print(f"Total de casos en la celda: {total:,}")
 if total > 0:
     cols_show = [c for c in ['archivo_fuente','categoria','tipo_delito','nivel_severidad','nivel_agrupado','peso_severidad','x','y','geometry'] if c in casos_en_celda.columns]
-    print("\nEjemplos (hasta 20) de casos en la celda:")
-    print(casos_en_celda[cols_show].head(20).to_string(index=False))
     # Guardar detalle a CSV para revisión
     out = Path(__file__).resolve().parent / f"casos_celda_{max_idx}.csv"
     casos_en_celda.to_csv(out, index=False, encoding='utf-8')
