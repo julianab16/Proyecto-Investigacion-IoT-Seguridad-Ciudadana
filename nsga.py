@@ -51,7 +51,11 @@ print("\n[1/4] Cargando archivos de delitos...")
 datasets = []
 archivos_a_buscar = [
     'Hurtos_fiscalia.csv',
-    'Homicidios_fiscalia.csv'
+    'Homicidios_fiscalia.csv',
+    'Delitos_Sexuales_fiscalia.csv',
+    'Extorsion_fiscalia.csv',
+    'Lesiones_fiscalia.csv',
+    'Violencia_Intrafamiliar_fiscalia.csv',
 ]
 
 archivos_cargados = 0
@@ -168,8 +172,8 @@ class OptimizacionMapaCalor(ElementwiseProblem):
         super().__init__(
             n_var=1,
             n_obj=3,
-            xl=np.array([40.0]),   # Mínimo: 50m
-            xu=np.array([150.0])   # Máximo: 500m
+            xl=np.array([50.0]),   # Mínimo
+            xu=np.array([130.0])   # Máximo 
         )
     
     def _evaluate(self, x, out, *args, **kwargs):
@@ -194,7 +198,7 @@ algorithm = NSGA2(
     eliminate_duplicates=True
 )
 
-termination = get_termination("n_gen", 10)
+termination = get_termination("n_gen", 8)
 
 res = minimize(
     problem,
