@@ -1,21 +1,51 @@
+# ========== IMPORTS ==========
 import osmnx as ox
 import geopandas as gpd
-import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
-from shapely.geometry import Point
+import pandas as pd
+from shapely.geometry import Point, Polygon
 import math
-from shapely.geometry import Polygon
-import warnings
-warnings.filterwarnings('ignore')
-#from sclim import mejorcelda
-#print("Mejor celda:", mejorcelda)
+import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
+from pathlib import Path
+
 # ========== CONFIGURACIÓN ==========
-LADO_HEX = 123.45   # lado del hexágono en metros
+LADO_HEX = 123.5   # lado del hexágono en metros
 
 print("=" * 70)
-print(" " * 15 + "MAPA DE CALOR DE SEGURIDAD - CALI")
+print(" " * 10 + "MAPA DE CALOR DE SEGURIDAD CON ENFOQUE DE GÉNERO")
+print(" " * 20 + "Santiago de Cali, Colombia")
 print("=" * 70)
+
+# ========== DEFINICIÓN DE PESOS POR TIPO DE DELITO ==========
+# Peso base (S) × Factor de género (G) = Peso total (P)
+PESOS_DELITOS = {
+    # Nivel 1 - Bajo (S=1, G=1.0, P=1.0)
+    'Hurto': {'severidad': 1, 'factor_genero': 1.0, 'peso_total': 1.0, 'nivel': 'Bajo'},
+    'Extorsion': {'severidad': 1, 'factor_genero': 1.0, 'peso_total': 1.0, 'nivel': 'Bajo'},
+    
+    # Nivel 2 - Moderado (S=2, G=1.0, P=2.0)
+    'Lesiones Personales': {'severidad': 2, 'factor_genero': 1.0, 'peso_total': 2.0, 'nivel': 'Moderado'},
+    'Lesiones': {'severidad': 2, 'factor_genero': 1.0, 'peso_total': 2.0, 'nivel': 'Moderado'},
+    
+    # Nivel 3 - Alto (S=3, G=1.5, P=4.5)
+    'Delitos Sexuales': {'severidad': 3, 'factor_genero': 1.5, 'peso_total': 4.5, 'nivel': 'Alto'},
+    'Violencia Intrafamiliar': {'severidad': 3, 'factor_genero': 1.5, 'peso_total': 4.5, 'nivel': 'Alto'},
+    
+    # Nivel 4 - Crítico (S=4, G=1.5, P=6.0)
+    'Homicidio': {'severidad': 4, 'factor_genero': 1.5, 'peso_total': 6.0, 'nivel': 'Crítico'},
+    'Feminicidio': {'severidad': 4, 'factor_genero': 1.5, 'peso_total': 6.0, 'nivel': 'Crítico'}
+}
+
+print("\n📊 SISTEMA DE PESOS CON ENFOQUE DE GÉNERO")
+print("─" * 70)
+print(f"{'Tipo de Delito':<25} {'Severidad':<12} {'F.Género':<10} {'Peso Total':<10}")
+print("─" * 70)
+for delito, config in PESOS_DELITOS.items():
+    print(f"{delito:<25} {config['severidad']:<12} {config['factor_genero']:<10.1f} {config['peso_total']:<10.1f}")
+print("─" * 70)
+print("💡 Los delitos con enfoque de género (violencia sexual, intrafamiliar,")
+print("   feminicidio) tienen un peso amplificado de 1.5x\n")
 
 # ========== CARGA DE DATOS ==========
 print("\n[1/6] Cargando mapa base de Cali...")
@@ -57,9 +87,10 @@ except AttributeError:
 
 polygons = [hexagon(cx, cy, LADO_HEX) for cx, cy in centers if hexagon(cx, cy, LADO_HEX).intersects(area_cali)]
 grid = gpd.GeoDataFrame(geometry=polygons, crs=cali.crs)
+grid = grid.reset_index(drop=False).rename(columns={'index':'grid_id'})
 print(f"✓ {len(polygons):,} hexágonos generados")
 
-# ========== FUNCIONES ==========
+# ========== FUNCIONES DE PROCESAMIENTO ==========
 def limpiar_coordenadas(df, lat_col='y', lon_col='x'):
     """Limpia y valida coordenadas"""
     df = df.copy()
@@ -79,31 +110,8 @@ def limpiar_coordenadas(df, lat_col='y', lon_col='x'):
     
     return df
 
-def extraer_nivel_severidad(valor):
-    """Extrae el nivel de severidad"""
-    if pd.isna(valor) or str(valor).strip() == '':
-        return None
-    
-    valor = str(valor).upper().strip()
-    
-    if "NIVEL 4" in valor or valor == "4":
-        return "Nivel 4"
-    elif "NIVEL 3" in valor or valor == "3":
-        return "Nivel 3"
-    elif "NIVEL 2" in valor or valor == "2":
-        return "Nivel 2"
-    elif "NIVEL 1" in valor or valor == "1":
-        return "Nivel 1"
-    return None
-
 def procesar_csv(archivo, nombre_categoria=None):
-    """
-    Procesa un archivo CSV y retorna DataFrame limpio
-    
-    Parámetros:
-    - archivo: ruta del archivo CSV
-    - nombre_categoria: nombre para identificar el tipo de delito
-    """
+    """Procesa un archivo CSV y retorna DataFrame limpio"""
     try:
         print(f"\n  Cargando: {archivo}")
         df = pd.read_csv(archivo, encoding='utf-8', on_bad_lines='skip')
@@ -114,67 +122,23 @@ def procesar_csv(archivo, nombre_categoria=None):
         
         print(f"    • Registros iniciales: {len(df):,}")
         
-        # Limpiar coordenadas
         df = limpiar_coordenadas(df, 'y', 'x')
         
         if df is None or len(df) == 0:
             print(f"    ⚠ Sin coordenadas válidas")
             return None
         
-        # Normalizar columnas
         df.columns = df.columns.str.strip().str.lower()
         
-        # Buscar columna de severidad
-        col_severidad = None
-        posibles_cols = ['nivel_severidad', 'nivel severidad', 'tipo_violencia']
-        
-        for col in posibles_cols:
-            if col in df.columns:
-                col_severidad = col
-                break
-        
-        if col_severidad is None:
-            print(f"    ✗ No se encontró columna de severidad")
-            print(f"       Columnas disponibles: {', '.join(df.columns.tolist()[:10])}")
-            return None
-        
-        df['nivel_severidad'] = df[col_severidad]
-        
-        # Identificar tipo de delito
         if nombre_categoria:
             df['categoria'] = nombre_categoria
         else:
-            # Intentar inferir del nombre del archivo
             nombre_archivo = archivo.split('/')[-1].replace('.csv', '').replace('_', ' ').title()
             df['categoria'] = nombre_archivo
         
-        # Buscar columna con tipo específico de delito
-        cols_tipo = ['tipo de hurto', 'dinámica', 'dinamica', 'tipo_delito']
-        col_tipo_encontrada = None
-        
-        for col in cols_tipo:
-            if col in df.columns:
-                col_tipo_encontrada = col
-                break
-        
-        if col_tipo_encontrada:
-            df['tipo_delito'] = df[col_tipo_encontrada].fillna(df['categoria'])
-        else:
-            df['tipo_delito'] = df['categoria']
-        
         df['archivo_fuente'] = archivo.split('/')[-1]
         
-        # Mostrar información
-        niveles = df['nivel_severidad'].dropna().unique()
-        print(f"    • Niveles encontrados: {', '.join(map(str, sorted(niveles)[:5]))}")
-        
-        tipos_top = df['tipo_delito'].value_counts().head(3)
-        if len(tipos_top) > 0:
-            print(f"    • Tipos principales:")
-            for tipo, count in tipos_top.items():
-                print(f"      - {str(tipo)[:55]}: {count:,}")
-        
-        print(f"    ✓ {len(df):,} registros procesados")
+        print(f"    ✓ {len(df):,} registros procesados - Categoría: {df['categoria'].iloc[0]}")
         return df
         
     except Exception as e:
@@ -184,9 +148,6 @@ def procesar_csv(archivo, nombre_categoria=None):
 # ========== CARGA DE ARCHIVOS CSV ==========
 print("\n[3/6] Cargando archivos de delitos...")
 
-datasets = []
-
-# OPCIÓN A: Cargar archivos específicos (más control)
 archivos_especificos = [
     ('Hurtos_fiscalia.csv', 'Hurto'),
     ('Homicidios_fiscalia.csv', 'Homicidio'),
@@ -196,7 +157,7 @@ archivos_especificos = [
     ('Extorsion_fiscalia.csv', 'Extorsion')
 ]
 
-print(f"\nBuscando archivos CSV...")
+datasets = []
 archivos_encontrados = 0
 
 for archivo, categoria in archivos_especificos:
@@ -206,7 +167,7 @@ for archivo, categoria in archivos_especificos:
             datasets.append(df)
             archivos_encontrados += 1
     except FileNotFoundError:
-        pass  # Archivo no existe, continuar
+        pass
     except Exception as e:
         print(f"  ⚠ Error procesando {archivo}: {str(e)}")
 
@@ -214,190 +175,234 @@ if archivos_encontrados == 0:
     print("\n" + "="*70)
     print("✗ ERROR: No se encontró ningún archivo CSV válido")
     print("="*70)
-    print("\nAsegúrate de tener archivos CSV con las siguientes columnas:")
-    print("  - x, y (coordenadas)")
-    print("  - nivel_severidad o tipo_violencia")
-    print("\nArchivos esperados:")
-    print("  • homicidios_2023.csv")
-    print("  • hurtos_2023.csv")
-    print("  • delitos_sexuales_2023.csv")
-    print("  • extorsion_2023.csv")
-    print("  • lesiones_personales_2023.csv")
-    print("  • violencia_intrafamiliar_2023.csv")
-    print("\nO usa tus archivos actuales:")
-    print("  • Hurtos_fiscalia.csv")
-    print("  • Dinamicas_delictivas.csv")
-    print("  • Dinamicasdelicticas.csv")
     exit()
 
 print(f"\n✓ Total de archivos procesados: {archivos_encontrados}")
 
-# Combinar todos los datasets
 df = pd.concat(datasets, ignore_index=True)
 print(f"✓ Total de registros combinados: {len(df):,}")
 
-# ========== SISTEMA DE SEVERIDAD ==========
-print("\n[4/6] Calculando índices de severidad...")
+# ========== ASIGNACIÓN DE PESOS CON ENFOQUE DE GÉNERO ==========
+print("\n[4/6] Calculando puntajes con enfoque de género...")
 
-pesos_severidad = {
-    "Nivel 1": 1,   # Bajo
-    "Nivel 2": 2,   # Moderado  
-    "Nivel 3": 4,   # Alto
-    "Nivel 4": 6    # Crítico
-}
-
-df["nivel_agrupado"] = df["nivel_severidad"].apply(extraer_nivel_severidad)
-
-# Eliminar casos sin nivel válido
-casos_sin_nivel = df["nivel_agrupado"].isna().sum()
-if casos_sin_nivel > 0:
-    print(f"  ⚠ {casos_sin_nivel:,} casos sin nivel válido (excluidos)")
-
-    df = df[df["nivel_agrupado"].notna()].copy()
-
-    cols_show = ['archivo_fuente', 'categoria', 'tipo_delito', 'nivel_severidad', 'x', 'y']
-    cols_show = [c for c in cols_show if c in df.columns]
-
-    print("\n  Ejemplos (hasta 10) de casos sin nivel válido:")
-    if len(df) > 0:
-        print(df[cols_show].head(10).to_string(index=False))
+def asignar_peso_delito(categoria):
+    """Asigna peso según categoría de delito"""
+    categoria_normalizada = categoria.strip()
+    
+    if categoria_normalizada in PESOS_DELITOS:
+        return PESOS_DELITOS[categoria_normalizada]['peso_total']
+    
+    # Búsqueda flexible por palabras clave
+    categoria_lower = categoria_normalizada.lower()
+    if 'hurto' in categoria_lower:
+        return PESOS_DELITOS['Hurto']['peso_total']
+    elif 'extorsion' in categoria_lower:
+        return PESOS_DELITOS['Extorsion']['peso_total']
+    elif 'lesion' in categoria_lower:
+        return PESOS_DELITOS['Lesiones Personales']['peso_total']
+    elif 'sexual' in categoria_lower or 'sexo' in categoria_lower:
+        return PESOS_DELITOS['Delitos Sexuales']['peso_total']
+    elif 'intrafamiliar' in categoria_lower or 'domestica' in categoria_lower:
+        return PESOS_DELITOS['Violencia Intrafamiliar']['peso_total']
+    elif 'homicidio' in categoria_lower or 'feminicidio' in categoria_lower:
+        return PESOS_DELITOS['Homicidio']['peso_total']
     else:
-        print("  (ninguno)")
+        print(f"  ⚠ Categoría no reconocida: '{categoria}' - asignando peso 1.0")
+        return 1.0
 
-if len(df) == 0:
-    print("\n✗ ERROR: No hay casos con nivel de severidad válido")
-    exit()
+df['peso_delito'] = df['categoria'].apply(asignar_peso_delito)
 
-df["peso_severidad"] = df["nivel_agrupado"].map(pesos_severidad)
-df["puntaje_individual"] = df["peso_severidad"]
+try:
+    gdf_temp = gpd.GeoDataFrame(df, geometry=[Point(lon, lat) for lon, lat in zip(df['x'], df['y'])], crs="EPSG:4326")
+    gdf_temp = gdf_temp.to_crs(cali.crs)
+    casos_dentro_cali = gdf_temp[gdf_temp.within(cali.geometry.iloc[0])]
+except Exception:
+    # Si falla la georreferenciación, caer al conjunto completo
+    casos_dentro_cali = gpd.GeoDataFrame(df, geometry=[Point(lon, lat) for lon, lat in zip(df['x'], df['y'])], crs="EPSG:4326")
 
-# Estadísticas
-print(f"\n  Distribución por nivel de severidad:")
-for nivel in ["Nivel 1", "Nivel 2", "Nivel 3", "Nivel 4"]:
-    count = len(df[df["nivel_agrupado"] == nivel])
-    pct = (count / len(df)) * 100 if len(df) > 0 else 0
-    print(f"    {nivel}: {count:,} ({pct:.1f}%)")
+df['peso_delito'] = df['categoria'].apply(asignar_peso_delito)
 
-print(f"\n  Distribución por categoría:")
-for cat in sorted(df['categoria'].unique()):
-    count = len(df[df['categoria'] == cat])
-    pct = (count / len(df)) * 100
-    print(f"    {cat}: {count:,} ({pct:.1f}%)")
+# ========== CONTEO DE FEMINICIDIOS ==========
+print("\n🔍 Verificando feminicidios en base de datos de homicidios...")
 
-print(f"\n  Top 10 tipos de delito:")
-for delito, count in df['tipo_delito'].value_counts().head(10).items():
-    pct = (count / len(df)) * 100
-    print(f"    {str(delito)[:50]}: {count:,} ({pct:.1f}%)")
+# Filtrar solo registros del archivo de homicidios
+homicidios_df = df[df['archivo_fuente'] == 'Homicidios_fiscalia.csv'].copy()
 
-# ========== GEOREFERENCIACIÓN ==========
-print("\n[5/6] Georeferenciando casos...")
+if len(homicidios_df) > 0:
+    # Normalizar nombres de columnas
+    homicidios_df.columns = homicidios_df.columns.str.strip().str.lower()
+    
+    # Buscar columna de feminicidios
+    col_feminicidio = None
+    posibles_nombres = ['feminicidios', 'feminicidio', 'feminicid']
+    
+    for nombre in posibles_nombres:
+        if nombre in homicidios_df.columns:
+            col_feminicidio = nombre
+            break
+    
+    if col_feminicidio is not None:
+        # Contar casos marcados como 'S' (Si es feminicidio)
+        feminicidios = homicidios_df[col_feminicidio].astype(str).str.upper()
+        count_feminicidios = (feminicidios == 'S').sum()
+        
+        print(f"  Columna encontrada: '{col_feminicidio}'")
+        print(f"  Total homicidios: {len(homicidios_df):,}")
+        print(f"  Feminicidios (S): {count_feminicidios}")
+        print(f"  No feminicidios (N): {(feminicidios == 'N').sum()}")
+        
+        if count_feminicidios > 0:
+            print(f"\n✓ RESULTADO: S {count_feminicidios}")
+        else:
+            print(f"\n✓ RESULTADO: N")
+    else:
+        print("  ⚠ No se encontró columna de feminicidios")
+        print(f"  Columnas disponibles: {list(homicidios_df.columns)}")
+        print("\n✓ RESULTADO: N")
+else:
+    print("  ⚠ No se encontraron registros del archivo Homicidios_fiscalia.csv")
+    print("\n✓ RESULTADO: N")
+
+# ========== ASIGNACIÓN DE PESOS CON ENFOQUE DE GÉNERO ==========
+print("\n[4/6] Calculando puntajes con enfoque de género...")
+# ...existing code...
+
+# ...existing code...
+print(f"\n  📊 Distribución por categoría de delito (dentro de Cali):")
+print("  " + "─" * 66)
+total_dentro = len(casos_dentro_cali)
+if total_dentro == 0:
+    print("    ⚠ No hay registros dentro de los límites de Cali.")
+else:
+    # Separar feminicidios de homicidios regulares
+    casos_mostrar = casos_dentro_cali.copy()
+    
+    # Identificar feminicidios en la base de homicidios
+    if 'archivo_fuente' in casos_mostrar.columns:
+        homicidios_mask = casos_mostrar['archivo_fuente'] == 'Homicidios_fiscalia.csv'
+        
+        if homicidios_mask.any():
+            # Normalizar columnas para buscar feminicidios
+            casos_mostrar.columns = casos_mostrar.columns.str.strip().str.lower()
+            
+            # Buscar columna de feminicidios
+            col_feminicidio = None
+            for col in ['feminicidios', 'feminicidio', 'feminicid']:
+                if col in casos_mostrar.columns:
+                    col_feminicidio = col
+                    break
+            
+            if col_feminicidio is not None:
+                # Separar feminicidios de homicidios
+                feminicidios_mask = (homicidios_mask & 
+                                   (casos_mostrar[col_feminicidio].astype(str).str.upper() == 'S'))
+                homicidios_no_feminicidios_mask = (homicidios_mask & 
+                                                 (casos_mostrar[col_feminicidio].astype(str).str.upper() == 'N'))
+                
+                # Actualizar categorías
+                casos_mostrar.loc[feminicidios_mask, 'categoria'] = 'Feminicidio'
+                casos_mostrar.loc[homicidios_no_feminicidios_mask, 'categoria'] = 'Homicidio (sin feminicidio)'
+                
+                # Actualizar peso para feminicidios
+                casos_mostrar.loc[feminicidios_mask, 'peso_delito'] = PESOS_DELITOS['Feminicidio']['peso_total']
+    
+    # Mostrar distribución actualizada
+    for cat in sorted(casos_mostrar['categoria'].unique()):
+        count = len(casos_mostrar[casos_mostrar['categoria'] == cat])
+        peso = casos_mostrar[casos_mostrar['categoria'] == cat]['peso_delito'].iloc[0]
+        pct = (count / total_dentro) * 100
+        print(f"    {cat:<30} {count:>6,} ({pct:>5.1f}%) | Peso: {peso:.1f}")
+print("  " + "─" * 66)
+
+# ========== GEOREFERENCIACIÓN Y CÁLCULO DE PUNTAJES ==========
+print("\n[5/6] Georeferenciando y calculando puntajes por celda...")
+
 geometry = [Point(lon, lat) for lon, lat in zip(df['x'], df['y'])]
 gdf_casos = gpd.GeoDataFrame(df, geometry=geometry, crs="EPSG:4326")
 gdf_casos = gdf_casos.to_crs(grid.crs)
 
 dentro = gdf_casos[gdf_casos.within(cali.geometry.iloc[0])]
-fuera = len(gdf_casos) - len(dentro)
 print(f"  • Casos dentro de Cali: {len(dentro):,}")
-if fuera > 0:
-    print(f"  • Casos fuera: {fuera:,}")
 
-grid = grid.reset_index(drop=False).rename(columns={'index':'grid_id'})
-
+# Spatial join
 casos_con_celda = gpd.sjoin(gdf_casos, grid, how="left", predicate="within")
-frecuencia_df = casos_con_celda.groupby("grid_id").size().rename("frecuencia").reset_index()
-peso_promedio_df = casos_con_celda.groupby("grid_id")["peso_severidad"].mean().rename("peso_promedio").reset_index()
-grid = grid.merge(frecuencia_df, on="grid_id", how="left")
-grid = grid.merge(peso_promedio_df, on="grid_id", how="left")
-grid["frecuencia"] = grid["frecuencia"].fillna(0).astype(int)
-grid["peso_promedio"] = grid["peso_promedio"].fillna(0.0)
 
-print(f"  ✓ Casos asignados a hexágonos")
+# Cálculo del Score por celda: Score_i = Σ(N_ij × P_j)
+print("\n  🧮 Calculando Score_i = Σ(N_ij × P_j)")
+puntaje_por_celda = casos_con_celda.groupby("grid_id")["peso_delito"].sum().rename("score_raw")
+frecuencia_por_celda = casos_con_celda.groupby("grid_id").size().rename("num_eventos")
 
-# ========== CÁLCULO DE ÍNDICE ==========
-def mapear_frecuencia(freq):
-    if freq == 0: return 0
-    elif 1 <= freq <= 3: return 1
-    elif 4 <= freq <= 6: return 3.5
-    elif 7 <= freq <= 9: return 5.5
-    elif 10 <= freq <= 14: return 9
-    else: return 15
+grid = grid.merge(puntaje_por_celda, on="grid_id", how="left")
+grid = grid.merge(frecuencia_por_celda, on="grid_id", how="left")
+grid["score_raw"] = grid["score_raw"].fillna(0.0)
+grid["num_eventos"] = grid["num_eventos"].fillna(0).astype(int)
 
-frecuencia_por_celda = casos_con_celda.groupby("index_right").size()
-peso_promedio_celda = casos_con_celda.groupby("index_right")["peso_severidad"].mean()
+# Normalización: ScoreNorm = (Score - Score_min) / (Score_max - Score_min)
+print("  📏 Normalizando puntajes...")
+score_min = grid["score_raw"].min()
+score_max = grid["score_raw"].max()
 
-indice_final_celda = pd.Series(dtype=float)
-for celda_id in frecuencia_por_celda.index:
-    freq = frecuencia_por_celda[celda_id]
-    freq_mapeada = mapear_frecuencia(freq)
-    peso_prom = peso_promedio_celda[celda_id]
-    indice_final_celda[celda_id] = freq_mapeada * peso_prom
+if score_max > score_min:
+    grid["score_normalizado"] = (grid["score_raw"] - score_min) / (score_max - score_min)
+else:
+    grid["score_normalizado"] = 0.0
 
-indice_severidad_celda = (indice_final_celda / 90) * 100  # 90 = 15*6 (máximo posible)
+# Escalar a 0-100
+grid["indice_inseguridad"] = grid["score_normalizado"] * 100
 
-grid["indice_final"] = grid["frecuencia"].apply(mapear_frecuencia) * grid["peso_promedio"]
-grid["indice_severidad"] = (grid["indice_final"] / (15*6)) * 100
-grid["indice_severidad"] = grid["indice_severidad"].fillna(0)
+print(f"    • Score mínimo: {score_min:.2f}")
+print(f"    • Score máximo: {score_max:.2f}")
+print(f"    • Rango normalizado: 0.00 - 1.00")
 
+# Intersección con Cali
 grid_cali = gpd.overlay(grid, cali, how="intersection")
-grid_cali["casos"] = grid_cali["frecuencia"] 
 
-# ========== QUINTILES ==========
-indices = grid_cali["indice_severidad"].values
-clasificacion = np.zeros_like(indices)
+# ========== CLASIFICACIÓN POR PERCENTILES ==========
+print("\n  📊 Clasificando en niveles de inseguridad (percentiles)...")
+
+indices = grid_cali["indice_inseguridad"].values
+clasificacion = np.zeros_like(indices, dtype=int)
 
 if np.any(indices > 0):
-    q1 = np.percentile(indices[indices > 0], 20)
-    q2 = np.percentile(indices[indices > 0], 40)
-    q3 = np.percentile(indices[indices > 0], 60)
-    q4 = np.percentile(indices[indices > 0], 80)
+    # Percentiles: 0-20, 20-40, 40-60, 60-80, 80-100
+    p20 = np.percentile(indices[indices > 0], 20)
+    p40 = np.percentile(indices[indices > 0], 40)
+    p60 = np.percentile(indices[indices > 0], 60)
+    p80 = np.percentile(indices[indices > 0], 80)
+    
+    clasificacion[indices == 0] = 0  # Sin datos
+    clasificacion[(indices > 0) & (indices <= p20)] = 1  # Muy bajo
+    clasificacion[(indices > p20) & (indices <= p40)] = 2  # Bajo
+    clasificacion[(indices > p40) & (indices <= p60)] = 3  # Medio
+    clasificacion[(indices > p60) & (indices <= p80)] = 4  # Alto
+    clasificacion[indices > p80] = 5  # Muy alto
+    
+    print(f"\n    Percentiles de clasificación:")
+    print(f"      • Muy Bajo:   0.00 - {p20:.2f}")
+    print(f"      • Bajo:      {p20:.2f} - {p40:.2f}")
+    print(f"      • Medio:     {p40:.2f} - {p60:.2f}")
+    print(f"      • Alto:      {p60:.2f} - {p80:.2f}")
+    print(f"      • Muy Alto:  {p80:.2f}+")
 
-    clasificacion[indices == 0] = 0
-    clasificacion[(indices > 0) & (indices <= q1)] = 1
-    clasificacion[(indices > q1) & (indices <= q2)] = 2
-    clasificacion[(indices > q2) & (indices <= q3)] = 3
-    clasificacion[(indices > q3) & (indices <= q4)] = 4
-    clasificacion[indices > q4] = 5
+grid_cali["nivel_inseguridad"] = clasificacion
 
-    print(f"\n  Quintiles:")
-    print(f"    Q1: 0 - {q1:.2f}")
-    print(f"    Q2: {q1:.2f} - {q2:.2f}")
-    print(f"    Q3: {q2:.2f} - {q3:.2f}")
-    print(f"    Q4: {q3:.2f} - {q4:.2f}")
-    print(f"    Q5: {q4:.2f}+")
-
-grid_cali["quintil"] = clasificacion
+# Estadísticas finales
+print(f"\n  📈 Distribución de celdas por nivel:")
+for nivel in range(6):
+    etiquetas = ['Sin datos', 'Muy Bajo', 'Bajo', 'Medio', 'Alto', 'Muy Alto']
+    count = (grid_cali["nivel_inseguridad"] == nivel).sum()
+    pct = (count / len(grid_cali)) * 100 if len(grid_cali) > 0 else 0
+    print(f"    {etiquetas[nivel]:<12}: {count:>4} celdas ({pct:>5.1f}%)")
 
 # ========== VISUALIZACIÓN ==========
-import matplotlib.pyplot as plt
-import matplotlib.colors as mcolors
-import osmnx as ox
+print("\n[6/6] Generando mapa de calor...")
 
-print("\n[6/6] Generando mapa...")
-
-# Ver ejemplos de filas sin index_right (no asignadas a ninguna celda)
-print("\nEjemplos sin index_right (5):")
-print(casos_con_celda[casos_con_celda['index_right'].isna()].head(5)[['archivo_fuente','x','y','nivel_severidad']].to_string(index=False))
-
-# Mostrar resumen de frecuencia y suma vs casos asignados
-frecuencia_por_celda = casos_con_celda.groupby("index_right").size()
-print("\nFrecuencia por celda (head):")
-print(frecuencia_por_celda.head(10))
-print("Suma frecuencias (casos asignados por sjoin):", frecuencia_por_celda.sum())
-print("Casos originales dentro de Cali:", len(dentro))
-
-print(f"\n  Estadísticas de celdas:")
-print(f"    • Total Celdas: {len(grid)}")
-print(f"    • Con casos: {len(grid[grid['frecuencia'] > 0]):,}")
-print(f"    • Sin casos: {len(grid[grid['frecuencia'] == 0]):,}")
-print(f"    • Alta concentración (>15 casos): {len(grid[grid['frecuencia'] > 15]):,}")
-print(f"     \n")
-
-fig, ax = plt.subplots(figsize=(9, 8))
+fig, ax = plt.subplots(figsize=(12, 10))
 
 # Mapa base
 cali.plot(ax=ax, color="white", edgecolor="black", linewidth=2.5, zorder=1)
 
-# Limites administrativos
+# Límites administrativos
 try:
     comunas = ox.features_from_place("Santiago de Cali, Colombia", 
                                     tags={'admin_level': ['8', '9', '10']})
@@ -406,112 +411,76 @@ try:
         comunas = comunas.to_crs(cali.crs)
         comunas.plot(ax=ax, color="none", edgecolor="gray", linewidth=0.8, 
                      alpha=0.5, linestyle='--', zorder=2)
-        print("  ✓ Límites administrativos")
-except Exception as e:
-    print("  ⚠️ No se pudieron cargar comunas:", e)
+        print("  ✓ Límites administrativos cargados")
+except:
+    print("  ⚠ No se pudieron cargar límites administrativos")
 
-# 🎨 Definir el colormap tipo semáforo
-# blanco (sin datos), verde, azul, naranja, rojo (máximo)
+# Colormap tipo semáforo
 colors = ["white", "green", "blue", "orange", "red"]
-cmap = mcolors.LinearSegmentedColormap.from_list("semaforo", colors, N=5)
 
-# Graficar la cuadrícula con el nuevo colormap
-grid_cali.plot(ax=ax, column="quintil", cmap=cmap,
-               alpha=0.75, edgecolor=None, vmin=0, vmax=5, zorder=3)
+colors = ["white", "green", "blue", "orange", "#fc2109", "red"]
+cmap = mcolors.LinearSegmentedColormap.from_list("seguridad", colors, N=6)
 
-# Barra de color personalizada
+# Graficar hexágonos
+grid_cali.plot(ax=ax, column="nivel_inseguridad", cmap=cmap,
+               alpha=0.75, edgecolor="black", linewidth=0.3, vmin=0, vmax=5, zorder=3)
+
+# Barra de color
 sm = plt.cm.ScalarMappable(cmap=cmap, norm=plt.Normalize(vmin=0, vmax=5))
 sm.set_array([])
-cbar = plt.colorbar(sm, ax=ax, label="Nivel de Riesgo", shrink=0.75)
+cbar = plt.colorbar(sm, ax=ax, label="Nivel de Inseguridad", shrink=0.7, pad=0.02)
 cbar.set_ticks([0, 1, 2, 3, 4, 5])
-cbar.set_ticklabels([
-    'Sin datos', 'Q1\nMuy Bajo', 'Q2\nBajo',
-    'Q3\nMedio', 'Q4\nAlto', 'Q5\nMuy Alto'
-])
+cbar.set_ticklabels(['Sin datos', 'Muy Bajo\n(0-20%)', 'Bajo\n(20-40%)',
+                     'Medio\n(40-60%)', 'Alto\n(60-80%)', 'Muy Alto\n(80-100%)'])
 
-# Título y etiquetas
-plt.title(f"Mapa de Calor de Seguridad - Santiago de Cali", 
-          fontsize=15, pad=20, weight='bold')
+# Título
+plt.title("Mapa de Calor de Seguridad con Enfoque de Género\nSantiago de Cali", 
+          fontsize=16, pad=20, weight='bold')
 plt.xlabel("Coordenada X (metros)", fontsize=11)
 plt.ylabel("Coordenada Y (metros)", fontsize=11)
 
-# Estadísticas resumen
-if grid_cali.empty or grid_cali['casos'].isna().all():
-    print("No hay datos de casos.")
-else:
-    max_idx = grid_cali['casos'].idxmax()
-    max_val = int(grid_cali.loc[max_idx, 'casos'] or 0)
-    poly = grid_cali.loc[max_idx, 'geometry']
-    centroid = poly.centroid
-    pct_total = (max_val / grid_cali['casos'].sum() * 100) if grid_cali['casos'].sum() > 0 else 0
-    print(f"Celda {max_idx}: {max_val} casos (centro: {centroid.x:.2f}, {centroid.y:.2f}) — {pct_total:.1f}% del total")
+# Panel de estadísticas
+total_eventos = grid_cali['num_eventos'].sum()
+celdas_activas = (grid_cali['num_eventos'] > 0).sum()
+total_celdas = len(grid_cali)
+max_idx = grid_cali['indice_inseguridad'].idxmax()
+max_score = grid_cali.loc[max_idx, 'indice_inseguridad']
+max_eventos = grid_cali.loc[max_idx, 'num_eventos']
 
-median = grid_cali['casos'].median()
-median_activas = grid_cali.loc[grid_cali['casos'] > 0, 'casos'].median()
-mean = grid_cali['casos'].mean()
-maxv = grid_cali['casos'].max()
-sum  = grid_cali['casos'].sum()
-active_count = (grid_cali['casos']>0).sum()
-noactivecount = (grid_cali['casos']==0).sum()
-stats = (f"Índice Promedio: {grid_cali['casos'].mean():.1f}\n"
-         f"Mediana: {median_activas:.1f}\n"
-         f"Máximo: {maxv:.1f}\n"
-         f"Promedio: {mean:.1f}\n"
-         f"sum: {sum:,}\n"
-         f"Celdas con casos: {active_count:,}\n"
-         f"Celdas sin casos: {noactivecount:,}\n")
-max_idx = grid_cali['casos'].idxmax()
-centroid = grid_cali.loc[max_idx].geometry.centroid
-max_val = int(grid_cali.loc[max_idx, 'casos'])
-poly = grid_cali.loc[max_idx, 'geometry']
-centroid = poly.centroid
-print(f"Celda con más casos -> index: {max_idx}, casos: {max_val}")
-print(f"Centroide -> x: {centroid.x:.2f}, y: {centroid.y:.2f}")
-total_casos = int(grid_cali['casos'].sum())
-celdas_con_casos = int((grid_cali['casos'] > 0).sum())
-total_celdas = int(len(grid_cali))
+stats_text = (
+    f"📊 ESTADÍSTICAS GENERALES\n"
+    f"{'─'*28}\n"
+    f"Total eventos: {total_eventos:,}\n"
+    f"Total celdas: {total_celdas:,}\n"
+    f"Celdas con datos: {celdas_activas:,}\n"
+    f"Celdas sin datos: {total_celdas - celdas_activas:,}\n"
+    f"\n🚨 CELDA MÁS CRÍTICA\n"
+    f"{'─'*28}\n"
+    f"Eventos: {max_eventos:,}\n"
+)
 
-print(f"Total casos asignados a celdas: {total_casos:,}\n")
-print(f"Celdas con al menos 1 caso: {celdas_con_casos:,} de {total_celdas:,}\n")
-
-# opcional: ver el polígono (coordenadas de los vértices)
-print("Polígono (vértices):", list(poly.exterior.coords))
-# opcional: ver todas las columnas de esa celda
-print(grid_cali.loc[max_idx])
-plt.text(0.02, 0.98, stats, transform=ax.transAxes, fontsize=10,
-         verticalalignment='top', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
+plt.text(0.001, 0.44, stats_text, transform=ax.transAxes, fontsize=9,
+         verticalalignment='top', family='monospace',
+         bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.9, pad=0.8))
 
 plt.tight_layout()
+plt.savefig('mapa_calor_genero_cali.png', dpi=300, bbox_inches='tight')
+print("\n✓ Mapa guardado como 'mapa_calor_genero_cali.png'")
 plt.show()
 
-
-# 1) Intentar seleccionar por pertenencia espacial (más robusto)
+# ========== EXPORTAR DETALLE DE CELDA MÁS CRÍTICA ==========
+print("\n📁 Exportando detalle de celda más crítica...")
+poly = grid_cali.loc[max_idx, 'geometry']
 casos_en_celda = gdf_casos[gdf_casos.within(poly)].copy()
 
-# 2) Si no encuentra nada, intentar por columnas añadidas por el sjoin ('grid_id' o 'index_right')
-if len(casos_en_celda) == 0:
-    gid = grid_cali.loc[max_idx].get('grid_id', None)
-    mask = pd.Series(False, index=casos_con_celda.index)
-    if gid is not None:
-        mask = mask | (casos_con_celda.get('grid_id') == gid)
-    mask = mask | (casos_con_celda.get('index_right') == max_idx)
-    casos_en_celda = casos_con_celda[mask].copy()
-
-# Mostrar detalles y listar los casos pertenecientes a la celda con más casos
-max_idx = grid_cali['casos'].idxmax()
-poly = grid_cali.loc[max_idx, 'geometry']
-print(f"\nCelda con más casos -> index: {max_idx}, casos: {int(grid_cali.loc[max_idx,'casos'])}")
-# ...existing code...
-from pathlib import Path
-# ...existing code...
-# Mostrar resumen y ejemplos
-total = len(casos_en_celda)
-print(f"Total de casos en la celda: {total:,}")
-if total > 0:
-    cols_show = [c for c in ['archivo_fuente','categoria','tipo_delito','nivel_severidad','nivel_agrupado','peso_severidad','x','y','geometry'] if c in casos_en_celda.columns]
-    # Guardar detalle a CSV para revisión
-    out = Path(__file__).resolve().parent / f"casos_celda_{max_idx}.csv"
-    casos_en_celda.to_csv(out, index=False, encoding='utf-8')
-    print(f"\nDetalle guardado en: {out}")
+if len(casos_en_celda) > 0:
+    out_path = Path(__file__).resolve().parent / f"celda_critica_{max_idx}.csv"
+    casos_en_celda.to_csv(out_path, index=False, encoding='utf-8')
+    print(f"✓ Detalle guardado en: {out_path}")
+    print(f"  • {len(casos_en_celda):,} eventos en esta celda")
 else:
-    print("No se encontraron casos asociados a la celda (revisar CRS / sjoin).")
+    print("⚠ No se encontraron casos en la celda crítica")
+
+print("\n" + "="*70)
+print("✓ PROCESO COMPLETADO")
+print("="*70)
