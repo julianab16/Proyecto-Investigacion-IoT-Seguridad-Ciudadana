@@ -365,3 +365,20 @@ print(f"  • Tamaño óptimo de celda: {mejor['h']:.1f} metros")
 print(f"  • Cobertura del mapa: {100 - mejor['pct_vacias']:.1f}%")
 print("\nUsa este valor en tu código de georeferenciación:")
 print(f"  LADO_HEX = {mejor['h']:.1f}  # metros\n")
+
+
+from pathlib import Path
+import json
+
+resultados_dir = Path(__file__).resolve().parent / "resultados_optimizacion"
+resultados_dir.mkdir(exist_ok=True)
+
+# 1. Exportar mejorcelda
+config = {
+    'celda': float(mejor['h']),
+    'metodo': 'NSGA II',
+}
+
+out_config = resultados_dir / "nsgacelda.json"
+out_config.write_text(json.dumps(config, indent=2))
+print(f"✓ Exportado: {out_config}")

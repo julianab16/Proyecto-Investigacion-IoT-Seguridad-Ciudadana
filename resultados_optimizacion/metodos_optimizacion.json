@@ -1,0 +1,10 @@
+{
+  "Gaussian Process": {
+    "h_optimo": 123.45084259064676,
+    "score_optimo": 240.83351343204868
+  },
+  "Random Forest": {
+    "h_optimo": 125.08421672126003,
+    "score_optimo": 241.46471114905398
+  }
+}
