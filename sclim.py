@@ -463,8 +463,39 @@ plt.suptitle(f'Optimización Bayesiana - Tamaño Óptimo: {mejorcelda:.0f}m',
              fontsize=15, weight='bold', y=0.995)
 plt.show()
 
+
 print("\n" + "=" * 80)
 print("✓ PROCESO COMPLETADO")
 print("=" * 80)
 print(f"\nArchivo generado: sclim.py")
 print(f"Valor para usar en georeferencia: mejorcelda = {mejorcelda:.1f}\n")
+
+# ========== EXPORTAR SOLO RESULTADOS PRINCIPALES ==========
+print("[7/6] Exportando resultados principales...")
+
+from pathlib import Path
+import json
+
+resultados_dir = Path(__file__).resolve().parent / "resultados_optimizacion"
+resultados_dir.mkdir(exist_ok=True)
+
+# 1. Exportar mejorcelda
+config = {
+    'mejorcelda': float(mejorcelda),
+    'mejor_metodo': mejor_metodo['metodo'],
+}
+
+out_config = resultados_dir / "mejorcelda.json"
+out_config.write_text(json.dumps(config, indent=2))
+print(f"✓ Exportado: {out_config}")
+
+# 2. Exportar métodos con sus tamaños óptimos
+metodos_export = {}
+for nombre, datos in resultados_metodos.items():
+    metodos_export[nombre] = {
+        'h_optimo': float(datos['h_optimo']),
+        'score_optimo': float(datos['score_optimo'])
+    }
+
+print(f"\n✓ Archivos exportados en: {resultados_dir}")
+print("=" * 80)

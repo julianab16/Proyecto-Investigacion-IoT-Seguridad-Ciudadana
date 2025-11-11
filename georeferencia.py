@@ -9,8 +9,37 @@ import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 from pathlib import Path
 
+# En georeferencia.py u otro archivo
+import json
+from pathlib import Path
+
+resultados_dir = Path(__file__).resolve().parent / "resultados_optimizacion"
+
+# Cargar mejorcelda
+with open(resultados_dir / "mejorcelda.json") as f:
+    config = json.load(f)
+    mejorcelda = config['mejorcelda']
+    mejor_metodo_nombre = config['mejor_metodo']
+
+# Cargar métodos con sus tamaños
+with open(resultados_dir / "metodos_optimizacion.json") as f:
+    metodos_optimizados = json.load(f)
+
+# Cargar nsga
+#with open(resultados_dir / "nsga.json") as f:
+#    nsga = json.load(f)
+
+print("\n") 
+print(f"Mejor tamaño de celda: {mejorcelda} m")
+print(f"Método ganador: {mejor_metodo_nombre}")
+#print(f"\nMétodo: {nsga[metodo]}, Tamaño de celda: {nsga[celda]}m")
+for nombre in metodos_optimizados:
+    h_optimo = metodos_optimizados[nombre]['h_optimo']
+    print(f"Método: {nombre}, Tamaño de celda: {h_optimo:.1f}m")
+print("\n") 
+
 # ========== CONFIGURACIÓN ==========
-LADO_HEX = 123.5   # lado del hexágono en metros
+LADO_HEX = mejorcelda   # lado del hexágono en metros
 
 print("=" * 70)
 print(" " * 10 + "MAPA DE CALOR DE SEGURIDAD CON ENFOQUE DE GÉNERO")
@@ -26,11 +55,12 @@ PESOS_DELITOS = {
     
     # Nivel 2 - Moderado (S=2, G=1.0, P=2.0)
     'Lesiones Personales': {'severidad': 2, 'factor_genero': 1.0, 'peso_total': 2.0, 'nivel': 'Moderado'},
-    'Lesiones': {'severidad': 2, 'factor_genero': 1.0, 'peso_total': 2.0, 'nivel': 'Moderado'},
     
     # Nivel 3 - Alto (S=3, G=1.5, P=4.5)
     'Delitos Sexuales': {'severidad': 3, 'factor_genero': 1.5, 'peso_total': 4.5, 'nivel': 'Alto'},
     'Violencia Intrafamiliar': {'severidad': 3, 'factor_genero': 1.5, 'peso_total': 4.5, 'nivel': 'Alto'},
+    'Lesiones Personales Agravados': {'severidad': 3, 'factor_genero': 1.5, 'peso_total': 4.5, 'nivel': 'Alto'},
+
     
     # Nivel 4 - Crítico (S=4, G=1.5, P=6.0)
     'Homicidio': {'severidad': 4, 'factor_genero': 1.5, 'peso_total': 6.0, 'nivel': 'Crítico'},
@@ -128,6 +158,7 @@ def procesar_csv(archivo, nombre_categoria=None):
             print(f"    ⚠ Sin coordenadas válidas")
             return None
         
+        # ✅ NORMALIZAR TODAS LAS COLUMNAS A MINÚSCULAS
         df.columns = df.columns.str.strip().str.lower()
         
         if nombre_categoria:
@@ -179,38 +210,89 @@ if archivos_encontrados == 0:
 
 print(f"\n✓ Total de archivos procesados: {archivos_encontrados}")
 
+
+
+
+
+
+
+
+# ...existing code...
+
+# Después de concatenar todos los dataframes:
 df = pd.concat(datasets, ignore_index=True)
 print(f"✓ Total de registros combinados: {len(df):,}")
+
+# NORMALIZAR COLUMNAS DEL DATAFRAME COMBINADO
+df.columns = df.columns.str.strip().str.lower()
 
 # ========== ASIGNACIÓN DE PESOS CON ENFOQUE DE GÉNERO ==========
 print("\n[4/6] Calculando puntajes con enfoque de género...")
 
-def asignar_peso_delito(categoria):
+# INSPECCIONAR COLUMNA nivel_severidad EN LESIONES
+print("\n🔍 INSPECCIÓN - Valores únicos de nivel_severidad en Lesiones:")
+lesiones_df = df[df['categoria'].str.contains('Lesion', case=False, na=False)].copy()
+if len(lesiones_df) > 0 and 'nivel_severidad' in lesiones_df.columns:
+    valores_unicos = lesiones_df['nivel_severidad'].unique()
+    print(f"  Valores encontrados ({len(valores_unicos)} únicos):")
+    for i, val in enumerate(valores_unicos):  # Mostrar primeros 20
+        count = (lesiones_df['nivel_severidad'] == val).sum()
+        print(f"    {i+1}. '{val}' → {count} registros")
+
+def asignar_peso_delito(row):
     """Asigna peso según categoría de delito"""
-    categoria_normalizada = categoria.strip()
+    try:
+        # Acceder a las columnas de la fila
+        categoria = str(row['categoria']).strip() if 'categoria' in row.index else ''
+        categoria_lower = categoria.lower()
+
+        # 1. Búsqueda exacta por categoría
+        if categoria in PESOS_DELITOS:
+            return PESOS_DELITOS[categoria]['peso_total']
+
+        # 2. Si es Lesión Personal, usar NIVEL_SEVERIDAD
+        if 'lesion' in categoria_lower:
+            nivel_severidad = None
+            if 'nivel_severidad' in row.index:
+                valor = row['nivel_severidad']
+                if pd.notna(valor):  # Verificar que no sea NaN
+                    nivel_severidad = str(valor).strip().lower()
+            
+            if nivel_severidad is not None and nivel_severidad != '':
+                # Nivel 3 = Lesión Agravada
+                if 'nivel 3' in nivel_severidad or nivel_severidad == '3':
+                    return PESOS_DELITOS['Lesiones Personales Agravados']['peso_total']  # 4.5
+                elif 'nivel 2' in nivel_severidad or nivel_severidad == '2':
+                    return PESOS_DELITOS['Lesiones Personales']['peso_total']  # 2.0
+            return PESOS_DELITOS['Lesiones Personales']['peso_total']  # 2.0 por defecto
+        
+        # 3. Búsqueda flexible para otros delitos
+        if 'hurto' in categoria_lower:
+            return PESOS_DELITOS['Hurto']['peso_total']  # 1.0
+        elif 'extorsion' in categoria_lower:
+            return PESOS_DELITOS['Extorsion']['peso_total']  # 1.0
+        elif 'delitos sexuales' in categoria_lower or 'sexo' in categoria_lower:
+            return PESOS_DELITOS['Delitos Sexuales']['peso_total']  # 4.5
+        elif 'intrafamiliar' in categoria_lower or 'domestica' in categoria_lower:
+            return PESOS_DELITOS['Violencia Intrafamiliar']['peso_total']  # 4.5
+        elif 'feminicidio' in categoria_lower:
+            return PESOS_DELITOS['Feminicidio']['peso_total']  # 6.0
+        elif 'homicidio' in categoria_lower:
+            return PESOS_DELITOS['Homicidio']['peso_total']  # 6.0
+        else:
+            return 1.0  # Peso por defecto
     
-    if categoria_normalizada in PESOS_DELITOS:
-        return PESOS_DELITOS[categoria_normalizada]['peso_total']
-    
-    # Búsqueda flexible por palabras clave
-    categoria_lower = categoria_normalizada.lower()
-    if 'hurto' in categoria_lower:
-        return PESOS_DELITOS['Hurto']['peso_total']
-    elif 'extorsion' in categoria_lower:
-        return PESOS_DELITOS['Extorsion']['peso_total']
-    elif 'lesion' in categoria_lower:
-        return PESOS_DELITOS['Lesiones Personales']['peso_total']
-    elif 'sexual' in categoria_lower or 'sexo' in categoria_lower:
-        return PESOS_DELITOS['Delitos Sexuales']['peso_total']
-    elif 'intrafamiliar' in categoria_lower or 'domestica' in categoria_lower:
-        return PESOS_DELITOS['Violencia Intrafamiliar']['peso_total']
-    elif 'homicidio' in categoria_lower or 'feminicidio' in categoria_lower:
-        return PESOS_DELITOS['Homicidio']['peso_total']
-    else:
-        print(f"  ⚠ Categoría no reconocida: '{categoria}' - asignando peso 1.0")
+    except Exception as e:
+        print(f"⚠ Error en asignar_peso_delito: {e}")
         return 1.0
 
-df['peso_delito'] = df['categoria'].apply(asignar_peso_delito)
+df['peso_delito'] = df.apply(asignar_peso_delito, axis=1)
+
+
+
+
+
+
 
 try:
     gdf_temp = gpd.GeoDataFrame(df, geometry=[Point(lon, lat) for lon, lat in zip(df['x'], df['y'])], crs="EPSG:4326")
@@ -220,54 +302,40 @@ except Exception:
     # Si falla la georreferenciación, caer al conjunto completo
     casos_dentro_cali = gpd.GeoDataFrame(df, geometry=[Point(lon, lat) for lon, lat in zip(df['x'], df['y'])], crs="EPSG:4326")
 
-df['peso_delito'] = df['categoria'].apply(asignar_peso_delito)
 
-# ========== CONTEO DE FEMINICIDIOS ==========
-print("\n🔍 Verificando feminicidios en base de datos de homicidios...")
 
-# Filtrar solo registros del archivo de homicidios
-homicidios_df = df[df['archivo_fuente'] == 'Homicidios_fiscalia.csv'].copy()
 
-if len(homicidios_df) > 0:
-    # Normalizar nombres de columnas
-    homicidios_df.columns = homicidios_df.columns.str.strip().str.lower()
-    
-    # Buscar columna de feminicidios
-    col_feminicidio = None
-    posibles_nombres = ['feminicidios', 'feminicidio', 'feminicid']
-    
-    for nombre in posibles_nombres:
-        if nombre in homicidios_df.columns:
-            col_feminicidio = nombre
-            break
-    
-    if col_feminicidio is not None:
-        # Contar casos marcados como 'S' (Si es feminicidio)
-        feminicidios = homicidios_df[col_feminicidio].astype(str).str.upper()
-        count_feminicidios = (feminicidios == 'S').sum()
-        
-        print(f"  Columna encontrada: '{col_feminicidio}'")
-        print(f"  Total homicidios: {len(homicidios_df):,}")
-        print(f"  Feminicidios (S): {count_feminicidios}")
-        print(f"  No feminicidios (N): {(feminicidios == 'N').sum()}")
-        
-        if count_feminicidios > 0:
-            print(f"\n✓ RESULTADO: S {count_feminicidios}")
-        else:
-            print(f"\n✓ RESULTADO: N")
-    else:
-        print("  ⚠ No se encontró columna de feminicidios")
-        print(f"  Columnas disponibles: {list(homicidios_df.columns)}")
-        print("\n✓ RESULTADO: N")
-else:
-    print("  ⚠ No se encontraron registros del archivo Homicidios_fiscalia.csv")
-    print("\n✓ RESULTADO: N")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 # ========== ASIGNACIÓN DE PESOS CON ENFOQUE DE GÉNERO ==========
 print("\n[4/6] Calculando puntajes con enfoque de género...")
-# ...existing code...
 
-# ...existing code...
 print(f"\n  📊 Distribución por categoría de delito (dentro de Cali):")
 print("  " + "─" * 66)
 total_dentro = len(casos_dentro_cali)
@@ -287,7 +355,7 @@ else:
             
             # Buscar columna de feminicidios
             col_feminicidio = None
-            for col in ['feminicidios', 'feminicidio', 'feminicid']:
+            for col in ['feminicidios', 'feminicidio']:
                 if col in casos_mostrar.columns:
                     col_feminicidio = col
                     break
@@ -326,7 +394,7 @@ print(f"  • Casos dentro de Cali: {len(dentro):,}")
 
 # Spatial join
 casos_con_celda = gpd.sjoin(gdf_casos, grid, how="left", predicate="within")
-
+casos_con_celda = casos_con_celda.dropna(subset=["grid_id"])
 # Cálculo del Score por celda: Score_i = Σ(N_ij × P_j)
 print("\n  🧮 Calculando Score_i = Σ(N_ij × P_j)")
 puntaje_por_celda = casos_con_celda.groupby("grid_id")["peso_delito"].sum().rename("score_raw")
@@ -402,28 +470,27 @@ fig, ax = plt.subplots(figsize=(12, 10))
 # Mapa base
 cali.plot(ax=ax, color="white", edgecolor="black", linewidth=2.5, zorder=1)
 
-# Límites administrativos
-try:
-    comunas = ox.features_from_place("Santiago de Cali, Colombia", 
-                                    tags={'admin_level': ['8', '9', '10']})
-    if len(comunas) > 0:
-        comunas = comunas[comunas.geometry.type.isin(['Polygon', 'MultiPolygon'])]
-        comunas = comunas.to_crs(cali.crs)
-        comunas.plot(ax=ax, color="none", edgecolor="gray", linewidth=0.8, 
-                     alpha=0.5, linestyle='--', zorder=2)
-        print("  ✓ Límites administrativos cargados")
-except:
-    print("  ⚠ No se pudieron cargar límites administrativos")
-
 # Colormap tipo semáforo
-colors = ["white", "green", "blue", "orange", "red"]
-
-colors = ["white", "green", "blue", "orange", "#fc2109", "red"]
+colors = ["white", "green", "blue", "yellow", "#f05209", "#1a0f0a"]
 cmap = mcolors.LinearSegmentedColormap.from_list("seguridad", colors, N=6)
 
 # Graficar hexágonos
 grid_cali.plot(ax=ax, column="nivel_inseguridad", cmap=cmap,
                alpha=0.75, edgecolor="black", linewidth=0.3, vmin=0, vmax=5, zorder=3)
+
+# Límites administrativos
+try:
+    comunas = ox.features_from_place("Santiago de Cali, Colombia", 
+                                    tags={'admin_level': ['8']})
+    if len(comunas) > 0:
+        comunas = comunas[comunas.geometry.type.isin(['Polygon', 'MultiPolygon'])]
+        comunas = comunas.to_crs(cali.crs)
+        comunas.plot(ax=ax, color="none", edgecolor="black", linewidth=2.0, 
+                     alpha=0.6, linestyle='-', zorder=3)
+        print("  ✓ Límites administrativos cargados")
+except:
+    print("  ⚠ No se pudieron cargar límites administrativos")
+
 
 # Barra de color
 sm = plt.cm.ScalarMappable(cmap=cmap, norm=plt.Normalize(vmin=0, vmax=5))
@@ -440,7 +507,7 @@ plt.xlabel("Coordenada X (metros)", fontsize=11)
 plt.ylabel("Coordenada Y (metros)", fontsize=11)
 
 # Panel de estadísticas
-total_eventos = grid_cali['num_eventos'].sum()
+total_eventos = len(dentro) 
 celdas_activas = (grid_cali['num_eventos'] > 0).sum()
 total_celdas = len(grid_cali)
 max_idx = grid_cali['indice_inseguridad'].idxmax()
@@ -448,22 +515,23 @@ max_score = grid_cali.loc[max_idx, 'indice_inseguridad']
 max_eventos = grid_cali.loc[max_idx, 'num_eventos']
 
 stats_text = (
-    f"📊 ESTADÍSTICAS GENERALES\n"
-    f"{'─'*28}\n"
-    f"Total eventos: {total_eventos:,}\n"
-    f"Total celdas: {total_celdas:,}\n"
-    f"Celdas con datos: {celdas_activas:,}\n"
-    f"Celdas sin datos: {total_celdas - celdas_activas:,}\n"
-    f"\n🚨 CELDA MÁS CRÍTICA\n"
-    f"{'─'*28}\n"
-    f"Eventos: {max_eventos:,}\n"
+    f"GENERAL STATISTICS\n"
+    f"{'─'*21}\n"
+    f"Total events: {total_eventos:,}\n"
+    f"Total cells: {total_celdas:,}\n"
+    f"Cells with data: {celdas_activas:,}\n"
+    f"Cells without data: {total_celdas - celdas_activas:,}"
 )
 
-plt.text(0.001, 0.44, stats_text, transform=ax.transAxes, fontsize=9,
+plt.text(0.56, 0.19, stats_text, transform=ax.transAxes, fontsize=9,
          verticalalignment='top', family='monospace',
          bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.9, pad=0.8))
 
-plt.tight_layout()
+# left, bottom, right, top, wspace, hspace
+plt.subplots_adjust(left=0.08, bottom=0.08, right=0.75, top=0.86)
+
+
+plt.grid(True, alpha=0.5, linestyle='--')
 plt.savefig('mapa_calor_genero_cali.png', dpi=300, bbox_inches='tight')
 print("\n✓ Mapa guardado como 'mapa_calor_genero_cali.png'")
 plt.show()
