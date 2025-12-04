@@ -12,11 +12,12 @@ sys.path.append(str(Path(__file__).parent))
 from georeferencia import GeoreferenciaMapa
 
 # Importar optimizador LoRaWISEP
-sys.path.append(str(Path(__file__).parent / 'optimizacion red'))
+opt_dir = Path(__file__).parent / 'optimizacion_red'
+# Priorizar el directorio de optimización en sys.path
+sys.path.insert(0, str(opt_dir))
 from kmeans import LoRaWISEPOptimization
 from ga import LoRaWISEPGAElbow
 from metricas import LoRaWANMetricsEvaluator
-
 
 class GeoreferenciaRedLoRaWAN(GeoreferenciaMapa):
     """
@@ -449,9 +450,11 @@ class GeoreferenciaRedLoRaWAN(GeoreferenciaMapa):
         plt.tight_layout()
 
         if guardar:
-            out = Path(__file__).resolve().parent / 'comparativa_gateways_en_mapa_cali.png'
-            plt.savefig(out, dpi=300, bbox_inches='tight', facecolor='white')
-            print(f"✓ Comparativa guardada: {out}")
+            images_dir = Path(__file__).resolve().parent / "images"
+            images_dir.mkdir(parents=True, exist_ok=True)
+            outname = images_dir / 'comparativa_gateways_en_mapa_cali.png'
+            plt.savefig(outname, dpi=300, bbox_inches='tight', facecolor='white')
+            print(f"✓ Comparativa guardada: {outname}")
 
         plt.show()
 
@@ -528,7 +531,9 @@ class GeoreferenciaRedLoRaWAN(GeoreferenciaMapa):
         plt.tight_layout()
         
         if guardar:
-            outname = name if name is not None else 'red_lorawan_cali_optimizada.png'
+            images_dir = Path(__file__).resolve().parent / "images"
+            images_dir.mkdir(parents=True, exist_ok=True)
+            outname = (images_dir / name) if name else (images_dir / 'red_lorawan_cali_optimizada.png')
             plt.savefig(outname, dpi=300, bbox_inches='tight')
             print(f"✓ Mapa guardado: {outname}")
         
@@ -618,12 +623,12 @@ if __name__ == "__main__":
     }
     
     archivos_especificos = [
-        ('Hurtos_fiscalia.csv', 'Hurto'),
-        ('Homicidios_fiscalia.csv', 'Homicidio'),
-        ('Delitos_Sexuales_fiscalia.csv', 'Delitos Sexuales'),
-        ('Lesiones_fiscalia.csv', 'Lesiones Personales'),
-        ('Violencia_Intrafamiliar_fiscalia.csv', 'Violencia Intrafamiliar'),
-        ('Extorsion_fiscalia.csv', 'Extorsion')
+        ('data_base/Hurtos_fiscalia.csv', 'Hurto'),
+        ('data_base/Homicidios_fiscalia.csv', 'Homicidio'),
+        ('data_base/Delitos_Sexuales_fiscalia.csv', 'Delitos Sexuales'),
+        ('data_base/Lesiones_fiscalia.csv', 'Lesiones Personales'),
+        ('data_base/Violencia_Intrafamiliar_fiscalia.csv', 'Violencia Intrafamiliar'),
+        ('data_base/Extorsion_fiscalia.csv', 'Extorsion')
     ]
     
     # ========== CREAR INSTANCIA ==========
