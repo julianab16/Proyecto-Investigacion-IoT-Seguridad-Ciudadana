@@ -466,7 +466,10 @@ class GeoreferenciaMapa:
         
         plt.subplots_adjust(left=0.08, bottom=0.08, right=0.75, top=0.86)
         plt.grid(True, alpha=0.5, linestyle='--')
-        plt.savefig('mapa_calor_genero_cali.png', dpi=300, bbox_inches='tight')
+        images_dir = Path(__file__).resolve().parent / "images"
+        images_dir.mkdir(parents=True, exist_ok=True)
+        out_path = images_dir / "mapa_calor_genero_cali.png"
+        plt.savefig(out_path, dpi=300, bbox_inches='tight')
         print("\n✓ Mapa guardado como 'mapa_calor_genero_cali.png'")
         plt.show()
         
@@ -498,7 +501,7 @@ class GeoreferenciaMapa:
         self.georreferenciar_y_calcular_scores()
         self.clasificar_niveles_inseguridad()
         self.visualizar_mapa()
-        self.exportar_celda_critica()
+        #self.exportar_celda_critica()
         
         print("\n" + "="*70)
         print("✓ PROCESO COMPLETADO")
@@ -539,12 +542,12 @@ if __name__ == "__main__":
     }
     
     archivos_especificos = [
-        ('Hurtos_fiscalia.csv', 'Hurto'),
-        ('Homicidios_fiscalia.csv', 'Homicidio'),
-        ('Delitos_Sexuales_fiscalia.csv', 'Delitos Sexuales'),
-        ('Lesiones_fiscalia.csv', 'Lesiones Personales'),
-        ('Violencia_Intrafamiliar_fiscalia.csv', 'Violencia Intrafamiliar'),
-        ('Extorsion_fiscalia.csv', 'Extorsion')
+        ('data_base/Hurtos_fiscalia.csv', 'Hurto'),
+        ('data_base/Homicidios_fiscalia.csv', 'Homicidio'),
+        ('data_base/Delitos_Sexuales_fiscalia.csv', 'Delitos Sexuales'),
+        ('data_base/Lesiones_fiscalia.csv', 'Lesiones Personales'),
+        ('data_base/Violencia_Intrafamiliar_fiscalia.csv', 'Violencia Intrafamiliar'),
+        ('data_base/Extorsion_fiscalia.csv', 'Extorsion')
     ]
     
     # Crear instancia y ejecutar
