@@ -50,16 +50,16 @@ print("\n[1/4] Cargando archivos de delitos...")
 
 datasets = []
 archivos_a_buscar = [
-    'Hurtos_fiscalia.csv',
-    'Homicidios_fiscalia.csv',
-    'Delitos_Sexuales_fiscalia.csv',
-    'Extorsion_fiscalia.csv',
-    'Lesiones_fiscalia.csv',
-    'Violencia_Intrafamiliar_fiscalia.csv',
+        ('data_base/Hurtos_fiscalia.csv', 'Hurto'),
+        ('data_base/Homicidios_fiscalia.csv', 'Homicidio'),
+        ('data_base/Delitos_Sexuales_fiscalia.csv', 'Delitos Sexuales'),
+        ('data_base/Lesiones_fiscalia.csv', 'Lesiones Personales'),
+        ('data_base/Violencia_Intrafamiliar_fiscalia.csv', 'Violencia Intrafamiliar'),
+        ('data_base/Extorsion_fiscalia.csv', 'Extorsion')
 ]
 
 archivos_cargados = 0
-for archivo in archivos_a_buscar:
+for archivo, nombre in archivos_a_buscar:
     if os.path.isfile(archivo):
         df = cargar_csv(archivo)
         if df is not None and len(df) > 0:

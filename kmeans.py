@@ -2,43 +2,29 @@ import sys
 from pathlib import Path
 import json
 import numpy as np
+import pandas as pd
 import matplotlib.pyplot as plt
 from sklearn.cluster import KMeans
 import geopandas as gpd
-from kneed import KneeLocator  # Para detectar el codo automáticamente
+from kneed import KneeLocator
+from shapely.geometry import Point
 
 from georeferencia import GeoreferenciaMapa
 
 class GeoreferenciaRedLoRaWAN(GeoreferenciaMapa):
     """
-    Extensión de GeoreferenciaMapa que integra optimización de red LoRaWAN
-    
-    Hereda toda la funcionalidad de georeferenciación y añade:
-    - Generación de nodos IoT desde datos de delitos
-    - Optimización de posicionamiento de gateways LoRaWAN
-    - Visualización de red completa con cobertura
+    Extensión de GeoreferenciaMapa que integra clustering de coordenadas
     """
     
     def __init__(self, archivos_especificos, PESOS_DELITOS, mejorcelda):
-        """
-        Args:
-            archivos_especificos: lista de tuplas (archivo.csv, categoría)
-            PESOS_DELITOS: diccionario con pesos por tipo de delito
-            mejorcelda: tamaño óptimo de celda hexagonal (metros)
-        """
-        # Inicializar clase base
         super().__init__(archivos_especificos, PESOS_DELITOS, mejorcelda)
 
     def ejecutar_pipeline_georeferenciacion(self):
-        """
-        Ejecuta el pipeline completo de georeferenciación
-        (Reutiliza el método de la clase base)
-        """
+        """Ejecuta el pipeline completo de georeferenciación"""
         print("\n" + "="*70)
         print("FASE 1: GEOREFERENCIACIÓN Y ANÁLISIS DE DELITOS")
         print("="*70)
         
-        # Ejecutar pipeline de la clase base
         self.mostrar_encabezado()
         self.mostrar_sistema_pesos()
         self.cargar_mapa_base()
@@ -51,14 +37,522 @@ class GeoreferenciaRedLoRaWAN(GeoreferenciaMapa):
         
         print("\n✓ Georeferenciación completada")
 
-
-
-
+class Kmeans():
+    def __init__(self, red_cali):
+        self.red_cali = red_cali
+    
+    def ejecutar_kmeans(self):
+        """Ejecuta K-Means simple sin ponderación"""
+        # ========== OBTENER COORDENADAS DENTRO DE CALI ==========
+        print("\n" + "="*70)
+        print("📍 EXTRAYENDO COORDENADAS DE DELITOS DENTRO DE CALI")
+        print("="*70)
+        
+        # Verificar que exista gdf_casos y cali
+        if not hasattr(self.red_cali, 'gdf_casos') or self.red_cali.gdf_casos is None:
+            raise RuntimeError("❌ No se encontró gdf_casos (eventos georreferenciados)")
+        
+        if not hasattr(self.red_cali, 'cali') or self.red_cali.cali is None:
+            raise RuntimeError("❌ No se encontró el mapa base de Cali")
+        
+        # FILTRAR SOLO CASOS DENTRO DE CALI
+        print(f"  • Total de casos georreferenciados: {len(self.red_cali.gdf_casos):,}")
+        
+        events_gdf = self.red_cali.gdf_casos[
+            self.red_cali.gdf_casos.within(self.red_cali.cali.geometry.iloc[0])
+        ].copy()
+        
+        print(f"  • Casos dentro de los límites de Cali: {len(events_gdf):,}")
+        print(f"  • Casos filtrados (fuera de Cali): {len(self.red_cali.gdf_casos) - len(events_gdf):,}")
+        
+        # Proyectar a sistema métrico si es necesario
+        if events_gdf.crs is None:
+            print("⚠ Sin CRS, asumiendo EPSG:4326")
+            events_gdf = events_gdf.set_crs(epsg=4326, allow_override=True)
+        
+        if events_gdf.crs.to_epsg() == 4326:
+            print("🔄 Proyectando de EPSG:4326 a EPSG:3116 (Colombia Oeste)")
+            events_proj = events_gdf.to_crs(epsg=3116)
+        else:
+            events_proj = events_gdf.copy()
+            print(f"✓ Usando CRS existente: {events_proj.crs}")
+        
+        # Asegurar geometrías Point (convertir centroides si es necesario)
+        events_proj = events_proj.copy()
+        events_proj['geom_point'] = events_proj.geometry.apply(
+            lambda g: g if (g is not None and g.geom_type == 'Point') else (g.centroid if g is not None else None)
+        )
+        events_proj = events_proj[events_proj['geom_point'].notna()].copy()
+        
+        # Extraer coordenadas como array NumPy
+        coords = np.vstack([
+            events_proj['geom_point'].x.values,
+            events_proj['geom_point'].y.values
+        ]).T
+        
+        print(f"✓ Coordenadas extraídas: {coords.shape[0]:,} puntos")
+        print(f"  • X min/max: {coords[:, 0].min():.1f} / {coords[:, 0].max():.1f}")
+        print(f"  • Y min/max: {coords[:, 1].min():.1f} / {coords[:, 1].max():.1f}")
+        
+        # ========== MÉTODO DEL CODO (K ÓPTIMO) ==========
+        print("\n" + "="*70)
+        print("📈 CALCULANDO K ÓPTIMO CON MÉTODO DEL CODO")
+        print("="*70)
+        
+        n_samples = coords.shape[0]
+        max_k = min(50, n_samples // 100)
+        k_range = range(2, max_k + 1)
+        inercias = []
+        
+        print(f"  • Muestras totales: {n_samples:,}")
+        print(f"  • Rango de K: {min(k_range)} - {max(k_range)}")
+        print(f"\n  Calculando inercias...")
+        
+        for k in k_range:
+            kmeans = KMeans(n_clusters=k, random_state=42, n_init=10, max_iter=300)
+            kmeans.fit(coords)
+            inercias.append(kmeans.inertia_)
+            
+            if k % 5 == 0:
+                print(f"    K={k:2d} | Inercia: {kmeans.inertia_:,.0f}")
+        
+        # Detectar codo
+        try:
+            kn = KneeLocator(list(k_range), inercias, curve='convex', direction='decreasing', S=1.0)
+            K_opt = kn.knee
+            
+            if K_opt is None:
+                raise ValueError("KneeLocator no detectó codo claro")
+            
+            print(f"\n🎯 K óptimo detectado (Elbow Method): {K_opt}")
+            
+        except Exception as e:
+            print(f"\n⚠ KneeLocator falló: {e}")
+            print("  Usando método de 2da derivada...")
+            
+            if len(inercias) >= 3:
+                second_diff = np.diff(inercias, 2)
+                K_opt = list(k_range)[np.argmax(second_diff) + 1]
+                print(f"🎯 K óptimo (2da derivada): {K_opt}")
+            else:
+                K_opt = 10
+                print(f"⚠ Usando K por defecto: {K_opt}")
+        
+        # ========== K-MEANS FINAL ==========
+        print("\n" + "="*70)
+        print(f"🔄 APLICANDO K-MEANS CON K={K_opt}")
+        print("="*70)
+        
+        kmeans_final = KMeans(n_clusters=K_opt, random_state=42, n_init='auto')
+        labels = kmeans_final.fit_predict(coords)
+        centroids = kmeans_final.cluster_centers_
+        
+        # Añadir cluster a cada evento
+        events_proj['cluster'] = labels
+        
+        # ========== ESTADÍSTICAS ==========
+        print("\n🏆 RESULTADOS:")
+        print("─"*70)
+        print(f"  ✅ Número de clusters: {K_opt}")
+        print(f"  📊 Delitos por cluster (promedio): {n_samples / K_opt:.1f}")
+        print(f"  📉 Inercia final: {kmeans_final.inertia_:,.0f}")
+        print("─"*70)
+        
+        # Distribución por cluster
+        print("\n📋 Distribución de delitos por cluster:")
+        for cluster_id in range(K_opt):
+            cluster_data = events_proj[events_proj['cluster'] == cluster_id]
+            print(f"\n  Cluster {cluster_id}: {len(cluster_data):,} delitos")
+            
+            # Top 3 tipos de delito
+            if 'categoria' in cluster_data.columns:
+                top_tipos = cluster_data['categoria'].value_counts().head(3)
+                for tipo, count in top_tipos.items():
+                    pct = (count / len(cluster_data)) * 100
+                    print(f"    • {tipo}: {count} ({pct:.1f}%)")
+        
+        # ========== VISUALIZACIÓN ==========
+        print("\n" + "="*70)
+        print("🎨 GENERANDO VISUALIZACIÓN")
+        print("="*70)
+        
+        fig, ax = plt.subplots(figsize=(16, 14))
+        
+        # Mapa base de Cali
+        if hasattr(self.red_cali, 'cali') and self.red_cali.cali is not None:
+            self.red_cali.cali.plot(ax=ax, color='lightgray', edgecolor='black', 
+                            linewidth=1.2, alpha=0.3, zorder=0)
+            print("  ✓ Mapa base de Cali cargado")
+        else:
+            ax.set_facecolor('#f0f0f0')
+            print("  ⚠ Sin mapa base (fondo gris)")
+        
+        # Scatter plot de todos los delitos (coloreados por cluster)
+        scatter = ax.scatter(coords[:, 0], coords[:, 1], 
+                            c=labels, cmap='tab20', s=15, alpha=0.6, zorder=2,
+                            edgecolors='black', linewidths=0.3)
+        
+        # Centroides (estrellas rojas)
+        ax.scatter(centroids[:, 0], centroids[:, 1], 
+                c='red', marker='*', s=800, 
+                edgecolors='black', linewidths=2.5, zorder=3,
+                label=f'Centroides (n={K_opt})')
+        
+        # Configuración
+        ax.set_title(f'Agrupación de Coordenadas de Delitos en Cali (K-Means, K={K_opt})\n' + 
+                    f'Total: {n_samples:,} delitos dentro de Cali agrupados en {K_opt} clusters',
+                    fontsize=16, fontweight='bold')
+        ax.set_xlabel('X (m)', fontsize=12)
+        ax.set_ylabel('Y (m)', fontsize=12)
+        ax.grid(True, alpha=0.3, linestyle='--')
+        ax.legend(loc='upper right', fontsize=11)
+        ax.set_aspect('equal', adjustable='box')
+        
+        # Colorbar
+        cbar = plt.colorbar(scatter, ax=ax, label='Cluster ID', shrink=0.7)
+        
+        plt.tight_layout()
+        
+        # Guardar
+        proj_dir = Path(__file__).resolve().parent
+        out_dir = proj_dir / "images"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        
+        out_img = out_dir / "clustering_coordenadas.png"
+        plt.savefig(out_img, dpi=300, bbox_inches='tight')
+        print(f"\n✓ Imagen guardada: {out_img}")
+        
+        plt.show()
+    
+    def ejecutar_kmeans_con_peso(self):
+        """
+        Ejecuta K-Means ponderado por severidad de delitos
+        Crea mapa de calor con colores según peligrosidad
+        """
+        # ========== OBTENER COORDENADAS DENTRO DE CALI ==========
+        print("\n" + "="*70)
+        print("📍 EXTRAYENDO COORDENADAS DE DELITOS DENTRO DE CALI (CON PESOS)")
+        print("="*70)
+        
+        # Verificar que exista gdf_casos y cali
+        if not hasattr(self.red_cali, 'gdf_casos') or self.red_cali.gdf_casos is None:
+            raise RuntimeError("❌ No se encontró gdf_casos (eventos georreferenciados)")
+        
+        if not hasattr(self.red_cali, 'cali') or self.red_cali.cali is None:
+            raise RuntimeError("❌ No se encontró el mapa base de Cali")
+        
+        # FILTRAR SOLO CASOS DENTRO DE CALI
+        print(f"  • Total de casos georreferenciados: {len(self.red_cali.gdf_casos):,}")
+        
+        events_gdf = self.red_cali.gdf_casos[
+            self.red_cali.gdf_casos.within(self.red_cali.cali.geometry.iloc[0])
+        ].copy()
+        
+        print(f"  • Casos dentro de los límites de Cali: {len(events_gdf):,}")
+        print(f"  • Casos filtrados (fuera de Cali): {len(self.red_cali.gdf_casos) - len(events_gdf):,}")
+        
+        if len(events_gdf) == 0:
+            raise RuntimeError("❌ No hay casos dentro de los límites de Cali")
+        
+        # Proyectar a sistema métrico
+        if events_gdf.crs is None:
+            print("⚠ Sin CRS, asumiendo EPSG:4326")
+            events_gdf = events_gdf.set_crs(epsg=4326, allow_override=True)
+        
+        if events_gdf.crs.to_epsg() == 4326:
+            print("🔄 Proyectando de EPSG:4326 a EPSG:3116 (Colombia Oeste)")
+            events_proj = events_gdf.to_crs(epsg=3116)
+        else:
+            events_proj = events_gdf.copy()
+            print(f"✓ Usando CRS existente: {events_proj.crs}")
+        
+        # Asegurar geometrías Point
+        events_proj = events_proj.copy()
+        events_proj['geom_point'] = events_proj.geometry.apply(
+            lambda g: g if (g is not None and g.geom_type == 'Point') else (g.centroid if g is not None else None)
+        )
+        events_proj = events_proj[events_proj['geom_point'].notna()].copy()
+        
+        # Extraer coordenadas y pesos
+        coords = np.vstack([
+            events_proj['geom_point'].x.values,
+            events_proj['geom_point'].y.values
+        ]).T
+        
+        # Obtener pesos de delitos (ya calculados en georeferencia.py)
+        if 'peso_delito' not in events_proj.columns:
+            print("⚠ No se encontró 'peso_delito', asignando peso=1.0 a todos")
+            events_proj['peso_delito'] = 1.0
+        
+        pesos = events_proj['peso_delito'].values
+        
+        print(f"\n✓ Coordenadas extraídas: {coords.shape[0]:,} puntos")
+        print(f"  • X min/max: {coords[:, 0].min():.1f} / {coords[:, 0].max():.1f}")
+        print(f"  • Y min/max: {coords[:, 1].min():.1f} / {coords[:, 1].max():.1f}")
+        print(f"  • Peso min/max: {pesos.min():.1f} / {pesos.max():.1f}")
+        
+        # ========== NO EXPANDIR DATOS, USAR DIRECTAMENTE ==========
+        print("\n⚖️  Usando pesos como sample_weight en K-Means...")
+        print(f"  • Total de puntos únicos: {len(coords):,}")
+        
+        # ========== MÉTODO DEL CODO (K ÓPTIMO) ==========
+        print("\n" + "="*70)
+        print("📈 CALCULANDO K ÓPTIMO CON MÉTODO DEL CODO")
+        print("="*70)
+        
+        n_samples = coords.shape[0]
+        max_k = min(50, n_samples // 100)
+        k_range = range(2, max_k + 1)
+        inercias = []
+        
+        print(f"  • Muestras totales: {n_samples:,}")
+        print(f"  • Rango de K: {min(k_range)} - {max(k_range)}")
+        print(f"\n  Calculando inercias (con ponderación)...")
+        
+        for k in k_range:
+            # ✅ USAR sample_weight EN LUGAR DE EXPANDIR DATOS
+            kmeans = KMeans(n_clusters=k, random_state=42, n_init=10, max_iter=300)
+            kmeans.fit(coords, sample_weight=pesos)
+            inercias.append(kmeans.inertia_)
+            
+            if k % 5 == 0:
+                print(f"    K={k:2d} | Inercia: {kmeans.inertia_:,.0f}")
+        
+        # Detectar codo
+        try:
+            kn = KneeLocator(list(k_range), inercias, curve='convex', direction='decreasing', S=1.0)
+            K_opt = kn.knee
+            
+            if K_opt is None:
+                raise ValueError("KneeLocator no detectó codo claro")
+            
+            print(f"\n🎯 K óptimo detectado (Elbow Method): {K_opt}")
+            
+        except Exception as e:
+            print(f"\n⚠ KneeLocator falló: {e}")
+            print("  Usando método de 2da derivada...")
+            
+            if len(inercias) >= 3:
+                second_diff = np.diff(inercias, 2)
+                K_opt = list(k_range)[np.argmax(second_diff) + 1]
+                print(f"🎯 K óptimo (2da derivada): {K_opt}")
+            else:
+                K_opt = 10
+                print(f"⚠ Usando K por defecto: {K_opt}")
+        
+        # ========== K-MEANS FINAL CON PESOS ==========
+        print("\n" + "="*70)
+        print(f"🔄 APLICANDO K-MEANS PONDERADO CON K={K_opt}")
+        print("="*70)
+        
+        # ✅ USAR sample_weight DIRECTAMENTE
+        kmeans_final = KMeans(n_clusters=K_opt, random_state=42, n_init='auto')
+        kmeans_final.fit(coords, sample_weight=pesos)
+        centroids = kmeans_final.cluster_centers_
+        
+        # Asignar cada delito a su cluster más cercano
+        labels = kmeans_final.predict(coords)
+        events_proj['cluster'] = labels
+        
+        # ========== CALCULAR PELIGROSIDAD POR CLUSTER ==========
+        print("\n🎯 Calculando nivel de peligrosidad por cluster...")
+        
+        peligrosidad_cluster = {}
+        for cluster_id in range(K_opt):
+            cluster_data = events_proj[events_proj['cluster'] == cluster_id]
+            
+            # Score total del cluster = suma de pesos
+            score_total = cluster_data['peso_delito'].sum()
+            num_delitos = len(cluster_data)
+            score_promedio = score_total / num_delitos if num_delitos > 0 else 0
+            
+            peligrosidad_cluster[cluster_id] = {
+                'score_total': score_total,
+                'num_delitos': num_delitos,
+                'score_promedio': score_promedio
+            }
+        
+        # Normalizar scores a rango [0, 5] (niveles de peligrosidad)
+        scores_totales = [p['score_total'] for p in peligrosidad_cluster.values()]
+        score_min = min(scores_totales)
+        score_max = max(scores_totales)
+        
+        for cluster_id in peligrosidad_cluster:
+            score = peligrosidad_cluster[cluster_id]['score_total']
+            
+            # Normalizar a [0, 1]
+            if score_max > score_min:
+                score_norm = (score - score_min) / (score_max - score_min)
+            else:
+                score_norm = 0.0
+            
+            # Clasificar en niveles 0-5
+            if score_norm == 0:
+                nivel = 1  # Sin datos
+            elif score_norm <= 0.2:
+                nivel = 1  # Muy Bajo
+            elif score_norm <= 0.4:
+                nivel = 2  # Bajo
+            elif score_norm <= 0.6:
+                nivel = 3  # Medio
+            elif score_norm <= 0.8:
+                nivel = 4  # Alto
+            else:
+                nivel = 5  # Muy Alto
+            
+            peligrosidad_cluster[cluster_id]['nivel'] = nivel
+            peligrosidad_cluster[cluster_id]['score_normalizado'] = score_norm
+        
+        # ========== ESTADÍSTICAS ==========
+        print("\n🏆 RESULTADOS:")
+        print("─"*70)
+        print(f"  ✅ Número de clusters: {K_opt}")
+        print(f"  📊 Delitos por cluster (promedio): {len(events_proj) / K_opt:.1f}")
+        print(f"  📉 Inercia final: {kmeans_final.inertia_:,.0f}")
+        print("─"*70)
+        
+        # Distribución por cluster
+        etiquetas = ['Sin datos', 'Muy Bajo', 'Bajo', 'Medio', 'Alto', 'Muy Alto']
+        
+        print("\n📋 Peligrosidad por cluster (ordenado de más a menos peligroso):")
+        clusters_ordenados = sorted(
+            peligrosidad_cluster.items(),
+            key=lambda x: x[1]['score_total'],
+            reverse=True
+        )
+        
+        for cluster_id, stats in clusters_ordenados:
+            nivel = stats['nivel']
+            print(f"\n  🔴 Cluster {cluster_id}: {etiquetas[nivel]} (Nivel {nivel})")
+            print(f"      • Delitos: {stats['num_delitos']:,}")
+            print(f"      • Score total: {stats['score_total']:.1f}")
+            print(f"      • Score promedio: {stats['score_promedio']:.2f}")
+            print(f"      • Score normalizado: {stats['score_normalizado']:.3f}")
+            
+            # Top 3 tipos de delito
+            cluster_data = events_proj[events_proj['cluster'] == cluster_id]
+            if 'categoria' in cluster_data.columns:
+                top_tipos = cluster_data['categoria'].value_counts().head(3)
+                for tipo, count in top_tipos.items():
+                    pct = (count / len(cluster_data)) * 100
+                    print(f"        - {tipo}: {count} ({pct:.1f}%)")
+        
+        # ========== VISUALIZACIÓN MAPA DE CALOR ==========
+        print("\n" + "="*70)
+        print("🎨 GENERANDO MAPA DE CALOR DE PELIGROSIDAD")
+        print("="*70)
+        
+        fig, ax = plt.subplots(figsize=(16, 14))
+        
+        # Mapa base de Cali
+        if hasattr(self.red_cali, 'cali') and self.red_cali.cali is not None:
+            self.red_cali.cali.plot(ax=ax, color='lightgray', edgecolor='black', 
+                                linewidth=1.2, alpha=0.3, zorder=0)
+            print("  ✓ Mapa base de Cali cargado")
+        
+        # Colormap personalizado (igual que georeferencia.py)
+        colors = ["white", "green", "blue", "yellow", "#f05209", "#1a0f0a"]
+        from matplotlib.colors import ListedColormap
+        cmap = ListedColormap(colors)
+        
+        # Asignar colores a cada punto según nivel de su cluster
+        colores_puntos = [peligrosidad_cluster[label]['nivel'] for label in labels]
+        
+        # Scatter de delitos (coloreados por nivel de peligrosidad)
+        scatter = ax.scatter(coords[:, 0], coords[:, 1], 
+                            c=colores_puntos, cmap=cmap, s=20, alpha=0.7, zorder=2,
+                            edgecolors='black', linewidths=0.3, vmin=0, vmax=5)
+        
+        # Centroides con color según peligrosidad
+        centroid_colors = [peligrosidad_cluster[i]['nivel'] for i in range(K_opt)]
+        centroid_sizes = [peligrosidad_cluster[i]['num_delitos'] for i in range(K_opt)]
+        
+        # Normalizar tamaños (min=500, max=2000)
+        size_min, size_max = 500, 2000
+        if max(centroid_sizes) > min(centroid_sizes):
+            sizes_norm = [
+                size_min + (s - min(centroid_sizes)) / (max(centroid_sizes) - min(centroid_sizes)) * (size_max - size_min)
+                for s in centroid_sizes
+            ]
+        else:
+            sizes_norm = [size_min] * len(centroid_sizes)
+        
+        ax.scatter(centroids[:, 0], centroids[:, 1], 
+                c=centroid_colors, cmap=cmap, marker='*', s=sizes_norm, 
+                edgecolors='white', linewidths=3, zorder=4, vmin=0, vmax=5,
+                label=f'Centroides (n={K_opt})')
+        
+        # Configuración
+        ax.set_title(
+            f'Mapa de Calor de Peligrosidad por Clustering (K-Means Ponderado, K={K_opt})\n' + 
+            f'Santiago de Cali - {len(events_proj):,} delitos agrupados en {K_opt} zonas',
+            fontsize=16, fontweight='bold'
+        )
+        ax.set_xlabel('X (m)', fontsize=12)
+        ax.set_ylabel('Y (m)', fontsize=12)
+        ax.grid(True, alpha=0.3, linestyle='--')
+        ax.legend(loc='upper right', fontsize=11)
+        ax.set_aspect('equal', adjustable='box')
+        
+        # Colorbar
+        cbar = plt.colorbar(scatter, ax=ax, label='Nivel de Peligrosidad', 
+                        shrink=0.7, ticks=[0, 1, 2, 3, 4, 5])
+        cbar.ax.set_yticklabels(['Sin datos', 'Muy Bajo\n(0-20%)', 'Bajo\n(20-40%)',
+                                'Medio\n(40-60%)', 'Alto\n(60-80%)', 'Muy Alto\n(80-100%)'])
+        
+        plt.tight_layout()
+        
+        # Guardar
+        proj_dir = Path(__file__).resolve().parent
+        out_dir = proj_dir / "images"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        
+        out_img = out_dir / "mapa_calor_peligrosidad_kmeans.png"
+        plt.savefig(out_img, dpi=300, bbox_inches='tight')
+        print(f"\n✓ Imagen guardada: {out_img}")
+        
+        plt.show()
+        
+        # ========== EXPORTAR RESULTADOS ==========
+        print("\n📁 EXPORTANDO RESULTADOS")
+        print("─"*70)
+        
+        # CSV de centroides con peligrosidad
+        centroides_df = pd.DataFrame(centroids, columns=['x', 'y'])
+        centroides_df['cluster_id'] = range(K_opt)
+        centroides_df['num_delitos'] = [peligrosidad_cluster[i]['num_delitos'] for i in range(K_opt)]
+        centroides_df['score_total'] = [peligrosidad_cluster[i]['score_total'] for i in range(K_opt)]
+        centroides_df['score_promedio'] = [peligrosidad_cluster[i]['score_promedio'] for i in range(K_opt)]
+        centroides_df['nivel_peligrosidad'] = [peligrosidad_cluster[i]['nivel'] for i in range(K_opt)]
+        centroides_df['etiqueta_nivel'] = centroides_df['nivel_peligrosidad'].map(lambda x: etiquetas[x])
+        
+        out_csv = out_dir / "centroides_peligrosidad.csv"
+        centroides_df.to_csv(out_csv, index=False, encoding='utf-8')
+        print(f"✓ Centroides con peligrosidad: {out_csv}")
+        print(f"  Columnas: x, y, cluster_id, num_delitos, score_total, nivel_peligrosidad, etiqueta_nivel")
+        
+        # CSV de delitos con cluster y nivel
+        out_delitos = out_dir / "delitos_con_peligrosidad.csv"
+        events_export = events_proj[['geom_point', 'cluster', 'categoria', 'peso_delito']].copy()
+        events_export['nivel_cluster'] = events_export['cluster'].map(lambda x: peligrosidad_cluster[x]['nivel'])
+        events_export['etiqueta_nivel'] = events_export['nivel_cluster'].map(lambda x: etiquetas[x])
+        events_export.to_csv(out_delitos, index=False, encoding='utf-8')
+        print(f"✓ Delitos clasificados: {out_delitos}")
+        
+        print("\n" + "="*70)
+        print("✅ K-MEANS CON PESOS COMPLETADO")
+        print("="*70)
+        
+        return {
+            'K_opt': K_opt,
+            'centroids': centroids,
+            'peligrosidad_cluster': peligrosidad_cluster,
+            'labels': labels
+        }
+            
 
 if __name__ == "__main__":
-    import json
-    
-    # Cargar configuración
+    # ========== CONFIGURACIÓN ==========
     resultados_dir = Path(__file__).resolve().parent / "resultados_optimizacion"
     
     with open(resultados_dir / "mejorcelda.json") as f:
@@ -67,7 +561,6 @@ if __name__ == "__main__":
     
     print(f"\n🔧 Tamaño de celda óptimo: {mejorcelda} m\n")
     
-    # Definir pesos de delitos
     PESOS_DELITOS = {
         'Hurto': {'severidad': 1, 'factor_genero': 1.0, 'peso_total': 1.0, 'nivel': 'Bajo'},
         'Extorsion': {'severidad': 1, 'factor_genero': 1.0, 'peso_total': 1.0, 'nivel': 'Bajo'},
@@ -88,200 +581,17 @@ if __name__ == "__main__":
         ('data_base/Extorsion_fiscalia.csv', 'Extorsion')
     ]
 
+    # ========== EJECUTAR GEOREFERENCIACIÓN ==========
     red_cali = GeoreferenciaRedLoRaWAN(archivos_especificos, PESOS_DELITOS, mejorcelda)
     red_cali.ejecutar_pipeline_georeferenciacion()
-    
-    # Buscar GeoDataFrame con los eventos georreferenciados (varias posibilidades)
-    events_gdf = None
-    for attr in ('casos_georreferenciados', 'df_todos_delitos', 'gdf_delitos', 'casos_dentro_cali'):
-        if hasattr(red_cali, attr):
-            events_gdf = getattr(red_cali, attr)
-            break
-    
-    if events_gdf is None:
-        # intentar buscar dataframes en atributos comunes
-        candidates = [v for k, v in red_cali.__dict__.items() if isinstance(v, gpd.GeoDataFrame)]
-        if candidates:
-            events_gdf = candidates[0]
-    
-    if events_gdf is None or len(events_gdf) == 0:
-        raise RuntimeError("No se encontró GeoDataFrame de eventos georreferenciados en la instancia. Revisa atributos de GeoreferenciaMapa.")
-    
-    # Asegurar geometría y sistema de referencia (projectar a metric si está en lat/lon)
-    if events_gdf.crs is None:
-        print("⚠ GeoDataFrame sin CRS; asumiendo EPSG:4326 y proyectando a 3857.")
-        events_gdf = events_gdf.set_crs(epsg=4326, allow_override=True)
-    if events_gdf.crs.to_epsg() in (4326, None):
-        events_proj = events_gdf.to_crs(epsg=3857)
-    else:
-        events_proj = events_gdf.to_crs(events_gdf.crs)  # queda igual si ya está proyectado
-    
-    # Asegurar que todas las geometrías tengan un punto para extraer coordenadas
-    geom_types = events_proj.geometry.geom_type.unique()
-    print(f"Geometry types found: {geom_types}")
-    
-    # Reemplazar geometrías no-Point por su centroid (seguro para clustering)
-    events_proj = events_proj.copy()
-    events_proj['geom_point'] = events_proj.geometry.apply(
-        lambda g: g if g is None else (g if g.geom_type == 'Point' else g.centroid)
-    )
 
-    # Filtrar filas sin geometría
-    events_proj = events_proj[events_proj['geom_point'].notna()].copy()
-    # Extraer coordenadas de forma segura
-    coords = np.vstack([events_proj['geom_point'].x.values, events_proj['geom_point'].y.values]).T
-    
-    # ========== CLUSTERING GLOBAL DE TODOS LOS DELITOS ==========
-    
-    # Detectar columna de tipo de delito
-    tipo_delito_col = None
-    for col in ['categoria', 'TIPO_DELITO', 'tipo_delito', 'DELITO', 'delito', 'CONDUCTA']:
-        if col in events_proj.columns:
-            tipo_delito_col = col
-            print(f"\n✓ Usando columna: '{tipo_delito_col}' para clasificar severidad")
-            break
-    
-    if tipo_delito_col is None:
-        print(f"\n⚠ Columnas disponibles: {events_proj.columns.tolist()}")
-        raise KeyError(f"No se encontró columna de tipo de delito.")
-    
-    def get_severidad(tipo_delito):
-        """Retorna severidad (1-4) del tipo de delito"""
-        for key, val in PESOS_DELITOS.items():
-            if key.lower() in str(tipo_delito).lower():
-                return val['severidad']
-        return 1  # Default: Bajo
-    
-    events_proj['severidad'] = events_proj[tipo_delito_col].apply(get_severidad)
-    
     print("\n" + "="*70)
-    print("📊 CLUSTERING GLOBAL DE TODOS LOS DELITOS")
+    print("FASE 2: CLUSTERING DE COORDENADAS CON PONDERACIÓN POR PELIGROSIDAD")
     print("="*70)
     
-    # --- MÉTODO DEL CODO PARA K ÓPTIMO (sobre TODOS los delitos) ---
-    print("\n📈 Calculando K óptimo con método del codo...")
+    kmeans_analyzer = Kmeans(red_cali)
+    resultados = kmeans_analyzer.ejecutar_kmeans_con_peso()
     
-    n_samples = coords.shape[0]
-    max_k = min(50, n_samples // 100)  # Máximo K razonable
-    k_range = range(2, max_k + 1)
-    inercias = []
-    
-    print(f"N delitos totales: {n_samples}")
-    print(f"Probando K desde {min(k_range)} hasta {max(k_range)}...")
-    
-    # Calcular inercia para cada K
-    for k in k_range:
-        kmeans = KMeans(n_clusters=k, random_state=42, n_init=10, max_iter=300)
-        kmeans.fit(coords)
-        inercias.append(kmeans.inertia_)
-        if k % 5 == 0:
-            print(f"  K={k:2d} | Inercia: {kmeans.inertia_:,.0f}")
-    
-    # Detectar codo
-    try:
-        kn = KneeLocator(list(k_range), inercias, curve='convex', direction='decreasing', S=1.0)
-        K_opt = kn.knee
-        if K_opt is None:
-            raise ValueError("KneeLocator no encontró codo claro")
-        print(f"\n🎯 K óptimo detectado: {K_opt}")
-    except Exception as e:
-        print(f"⚠ KneeLocator falló ({e}). Usando método alternativo...")
-        if len(inercias) >= 3:
-            second_diff = np.diff(inercias, 2)
-            K_opt = list(k_range)[np.argmax(second_diff) + 1]
-            print(f"🎯 K óptimo (2da derivada): {K_opt}")
-        else:
-            K_opt = 10
-            print(f"⚠ Usando K por defecto = {K_opt}")
-    
-    # Aplicar K-Means final sobre TODOS los delitos
-    print(f"\n🔄 Aplicando K-Means con K={K_opt} sobre {n_samples} delitos...")
-    kmeans_final = KMeans(n_clusters=K_opt, random_state=42, n_init='auto')
-    labels = kmeans_final.fit_predict(coords)
-    centroids = kmeans_final.cluster_centers_
-    
-    # Añadir cluster a cada evento
-    events_proj['cluster'] = labels
-    
-    # Estadísticas por cluster
-    print("\n" + "=" * 70)
-    print("🏆 RESULTADOS CLUSTERING GLOBAL")
-    print("=" * 70)
-    print(f"✅ K óptimo (zonas criminales): {K_opt}")
-    print(f"📊 Delitos por cluster promedio: {len(coords) / K_opt:.1f}")
-    print(f"📉 Inercia final: {kmeans_final.inertia_:,.0f}")
-    print(f"📏 Tamaño de celda hexagonal: {mejorcelda} m")
-    print("=" * 70)
-    
-    # Mostrar distribución de severidad por cluster
-    print("\n📋 Distribución de severidad por cluster:")
-    for cluster_id in range(K_opt):
-        cluster_data = events_proj[events_proj['cluster'] == cluster_id]
-        sev_counts = cluster_data['severidad'].value_counts().sort_index()
-        print(f"\n  Cluster {cluster_id}: {len(cluster_data)} delitos")
-        for sev, count in sev_counts.items():
-            print(f"    Severidad {sev}: {count} casos ({count/len(cluster_data)*100:.1f}%)")
-    
-    # ========== VISUALIZACIÓN ==========
-    fig, ax = plt.subplots(figsize=(16, 14))
-    
-    # Mapa base de Cali
-    if hasattr(red_cali, 'cali') and red_cali.cali is not None:
-        red_cali.cali.plot(ax=ax, color='lightgray', edgecolor='black', 
-                          linewidth=1.2, alpha=0.3, zorder=0)
-        print("\n✓ Mapa base de Cali dibujado")
-    else:
-        ax.set_facecolor('#f0f0f0')
-        print("\n⚠ No se encontró mapa de Cali, usando fondo gris")
-    
-    # Colores por severidad
-    colores_severidad = {
-        1: 'green',      # Bajo
-        2: 'yellow',     # Moderado
-        3: 'orange',     # Alto
-        4: 'red'         # Crítico
-    }
-    
-    nombres_severidad = {
-        1: 'Bajo (Hurto, Extorsión)',
-        2: 'Moderado (Lesiones)',
-        3: 'Alto (Delitos Sexuales, V. Intrafamiliar)',
-        4: 'Crítico (Homicidio, Feminicidio)'
-    }
-    
-    # Graficar delitos por severidad (mismo cluster, diferente color por severidad)
-    for sev in sorted(events_proj['severidad'].unique()):
-        sev_data = events_proj[events_proj['severidad'] == sev]
-        sev_coords = np.vstack([sev_data['geom_point'].x.values, 
-                               sev_data['geom_point'].y.values]).T
-        
-        ax.scatter(sev_coords[:, 0], sev_coords[:, 1], 
-                  c=colores_severidad[sev], s=20, alpha=0.5, zorder=2,
-                  label=f'{nombres_severidad[sev]} ({len(sev_data)} casos)')
-    
-    # Centroides (todos juntos, en negro)
-    ax.scatter(centroids[:, 0], centroids[:, 1], 
-              c='black', marker='*', s=500, 
-              edgecolors='white', linewidths=2, zorder=3,
-              label=f'Centroides (n={K_opt})')
-    
-    # Configuración de gráfica
-    ax.set_title(f'Clustering Global de Delitos (K-Means, K={K_opt})\n' + 
-                f'Agrupación de {n_samples:,} delitos en {K_opt} zonas criminales',
-                fontsize=16, fontweight='bold')
-    ax.set_xlabel('X (m)', fontsize=12)
-    ax.set_ylabel('Y (m)', fontsize=12)
-    ax.grid(True, alpha=0.3, linestyle='--')
-    ax.legend(loc='upper right', fontsize=10, framealpha=0.9)
-    ax.set_aspect('equal', adjustable='box')
-    
-    plt.tight_layout()
-    
-    # Guardar
-    proj_dir = Path(__file__).resolve().parent
-    out_dir = proj_dir / "images"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    out_img = out_dir / "clustering_global.png"
-    plt.savefig(out_img, dpi=300, bbox_inches='tight')
-    print(f"\n✓ Imagen guardada: {out_img}")
-    plt.show()
+    print("\n" + "="*70)
+    print("✅ PROCESO COMPLETADO")
+    print("="*70)

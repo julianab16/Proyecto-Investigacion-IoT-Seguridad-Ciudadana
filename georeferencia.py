@@ -473,22 +473,6 @@ class GeoreferenciaMapa:
         print("\n✓ Mapa guardado como 'mapa_calor_genero_cali.png'")
         plt.show()
         
-    def exportar_celda_critica(self):
-        """Exporta detalle de la celda más crítica"""
-        print("\n📁 Exportando detalle de celda más crítica...")
-        
-        max_idx = self.grid_cali['indice_inseguridad'].idxmax()
-        poly = self.grid_cali.loc[max_idx, 'geometry']
-        casos_en_celda = self.gdf_casos[self.gdf_casos.within(poly)].copy()
-        
-        if len(casos_en_celda) > 0:
-            out_path = Path(__file__).resolve().parent / f"celda_critica_{max_idx}.csv"
-            casos_en_celda.to_csv(out_path, index=False, encoding='utf-8')
-            print(f"✓ Detalle guardado en: {out_path}")
-            print(f"  • {len(casos_en_celda):,} eventos en esta celda")
-        else:
-            print("⚠ No se encontraron casos en la celda crítica")
-            
     def ejecutar_pipeline_completo(self):
         """Ejecuta todo el pipeline de procesamiento"""
         self.mostrar_encabezado()
@@ -501,7 +485,6 @@ class GeoreferenciaMapa:
         self.georreferenciar_y_calcular_scores()
         self.clasificar_niveles_inseguridad()
         self.visualizar_mapa()
-        #self.exportar_celda_critica()
         
         print("\n" + "="*70)
         print("✓ PROCESO COMPLETADO")
@@ -521,7 +504,8 @@ if __name__ == "__main__":
     
     with open(resultados_dir / "metodos_optimizacion.json") as f:
         metodos_optimizados = json.load(f)
-    
+        print(f"\nMejor tamaño de celda: {mejorcelda} m")
+
     print(f"\nMejor tamaño de celda: {mejorcelda} m")
     print(f"Método ganador: {mejor_metodo_nombre}")
     for nombre in metodos_optimizados:
