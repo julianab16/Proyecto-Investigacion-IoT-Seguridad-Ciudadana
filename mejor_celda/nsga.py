@@ -9,7 +9,6 @@ from pymoo.core.problem import ElementwiseProblem
 from pymoo.termination import get_termination
 import pandas as pd
 import warnings
-import glob
 import os
 
 warnings.filterwarnings('ignore')
