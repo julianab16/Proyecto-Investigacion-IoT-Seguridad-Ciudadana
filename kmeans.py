@@ -1,14 +1,10 @@
-import sys
 from pathlib import Path
 import json
 import numpy as np
-import pandas as pd
 import matplotlib.pyplot as plt
 from sklearn.cluster import KMeans
-import geopandas as gpd
 from kneed import KneeLocator
-from shapely.geometry import Point
-
+import matplotlib.colors as mcolors
 from georeferencia import GeoreferenciaMapa
 
 class GeoreferenciaRedLoRaWAN(GeoreferenciaMapa):
@@ -192,11 +188,11 @@ class Kmeans():
                             c=labels, cmap='tab20', s=15, alpha=0.6, zorder=2,
                             edgecolors='black', linewidths=0.3)
         
-        # Centroides (estrellas rojas)
+        # Centroids (red stars)
         ax.scatter(centroids[:, 0], centroids[:, 1], 
-                c='red', marker='*', s=800, 
-                edgecolors='black', linewidths=2.5, zorder=3,
-                label=f'Centroides (n={K_opt})')
+                c='red', marker='*', s=300, 
+                edgecolors='black', linewidths=1.5, zorder=3,
+                label=f'Centroids (n={K_opt})')
         
         # Configuración
         ax.set_title(f'Agrupación de Coordenadas de Delitos en Cali (K-Means, K={K_opt})\n' + 
@@ -301,14 +297,14 @@ class Kmeans():
         print("="*70)
         
         n_samples = coords.shape[0]
-        max_k = min(50, n_samples // 100)
+        max_k = 3222
         k_range = range(2, max_k + 1)
         inercias = []
         
         print(f"  • Muestras totales: {n_samples:,}")
         print(f"  • Rango de K: {min(k_range)} - {max(k_range)}")
         print(f"\n  Calculando inercias (con ponderación)...")
-        
+        """
         for k in k_range:
             # ✅ USAR sample_weight EN LUGAR DE EXPANDIR DATOS
             kmeans = KMeans(n_clusters=k, random_state=42, n_init=10, max_iter=300)
@@ -339,7 +335,8 @@ class Kmeans():
             else:
                 K_opt = 10
                 print(f"⚠ Usando K por defecto: {K_opt}")
-        
+                """
+        K_opt = 1000 #3326
         # ========== K-MEANS FINAL CON PESOS ==========
         print("\n" + "="*70)
         print(f"🔄 APLICANDO K-MEANS PONDERADO CON K={K_opt}")
@@ -373,36 +370,52 @@ class Kmeans():
             }
         
         # Normalizar scores a rango [0, 5] (niveles de peligrosidad)
-        scores_totales = [p['score_total'] for p in peligrosidad_cluster.values()]
-        score_min = min(scores_totales)
-        score_max = max(scores_totales)
-        
+        scores_totales = np.array([p['score_total'] for p in peligrosidad_cluster.values()])
+        # Calcular percentiles solo para clusters con datos
+        scores_con_datos = scores_totales[scores_totales > 0]
+
+        if len(scores_con_datos) > 0:
+            p20 = np.percentile(scores_con_datos, 20)
+            p40 = np.percentile(scores_con_datos, 40)
+            p60 = np.percentile(scores_con_datos, 60)
+            p80 = np.percentile(scores_con_datos, 80)
+            
+            print(f"\n  📊 Percentiles de peligrosidad:")
+            print(f"    • P20 (Muy Bajo): {p20:.2f}")
+            print(f"    • P40 (Bajo):     {p40:.2f}")
+            print(f"    • P60 (Medio):    {p60:.2f}")
+            print(f"    • P80 (Alto):     {p80:.2f}")
+            print(f"    • Max (Muy Alto): {scores_con_datos.max():.2f}")
+        else:
+            p20 = p40 = p60 = p80 = 0
+
+        # Asignar niveles basados en percentiles
         for cluster_id in peligrosidad_cluster:
             score = peligrosidad_cluster[cluster_id]['score_total']
             
-            # Normalizar a [0, 1]
-            if score_max > score_min:
-                score_norm = (score - score_min) / (score_max - score_min)
+            # Clasificar en niveles 0-5 usando percentiles
+            if score == 0:
+                nivel = 0  # Sin datos
+            elif score <= p20:
+                nivel = 1  # Muy Bajo (0-20%)
+            elif score <= p40:
+                nivel = 2  # Bajo (20-40%)
+            elif score <= p60:
+                nivel = 3  # Medio (40-60%)
+            elif score <= p80:
+                nivel = 4  # Alto (60-80%)
+            else:
+                nivel = 5  # Muy Alto (80-100%)
+            
+            # Calcular score normalizado para referencia
+            if np.max(scores_totales) > 0:
+                score_norm = score / np.max(scores_totales)
             else:
                 score_norm = 0.0
             
-            # Clasificar en niveles 0-5
-            if score_norm == 0:
-                nivel = 1  # Sin datos
-            elif score_norm <= 0.2:
-                nivel = 1  # Muy Bajo
-            elif score_norm <= 0.4:
-                nivel = 2  # Bajo
-            elif score_norm <= 0.6:
-                nivel = 3  # Medio
-            elif score_norm <= 0.8:
-                nivel = 4  # Alto
-            else:
-                nivel = 5  # Muy Alto
-            
             peligrosidad_cluster[cluster_id]['nivel'] = nivel
             peligrosidad_cluster[cluster_id]['score_normalizado'] = score_norm
-        
+            
         # ========== ESTADÍSTICAS ==========
         print("\n🏆 RESULTADOS:")
         print("─"*70)
@@ -410,10 +423,7 @@ class Kmeans():
         print(f"  📊 Delitos por cluster (promedio): {len(events_proj) / K_opt:.1f}")
         print(f"  📉 Inercia final: {kmeans_final.inertia_:,.0f}")
         print("─"*70)
-        
-        # Distribución por cluster
-        etiquetas = ['Sin datos', 'Muy Bajo', 'Bajo', 'Medio', 'Alto', 'Muy Alto']
-        
+                
         print("\n📋 Peligrosidad por cluster (ordenado de más a menos peligroso):")
         clusters_ordenados = sorted(
             peligrosidad_cluster.items(),
@@ -422,6 +432,7 @@ class Kmeans():
         )
         
         for cluster_id, stats in clusters_ordenados:
+            """
             nivel = stats['nivel']
             print(f"\n  🔴 Cluster {cluster_id}: {etiquetas[nivel]} (Nivel {nivel})")
             print(f"      • Delitos: {stats['num_delitos']:,}")
@@ -436,6 +447,7 @@ class Kmeans():
                 for tipo, count in top_tipos.items():
                     pct = (count / len(cluster_data)) * 100
                     print(f"        - {tipo}: {count} ({pct:.1f}%)")
+            """
         
         # ========== VISUALIZACIÓN MAPA DE CALOR ==========
         print("\n" + "="*70)
@@ -452,23 +464,21 @@ class Kmeans():
         
         # Colormap personalizado (igual que georeferencia.py)
         colors = ["white", "green", "blue", "yellow", "#f05209", "#1a0f0a"]
-        from matplotlib.colors import ListedColormap
-        cmap = ListedColormap(colors)
+        cmap = mcolors.LinearSegmentedColormap.from_list("seguridad", colors, N=6)
         
         # Asignar colores a cada punto según nivel de su cluster
         colores_puntos = [peligrosidad_cluster[label]['nivel'] for label in labels]
         
         # Scatter de delitos (coloreados por nivel de peligrosidad)
         scatter = ax.scatter(coords[:, 0], coords[:, 1], 
-                            c=colores_puntos, cmap=cmap, s=20, alpha=0.7, zorder=2,
-                            edgecolors='black', linewidths=0.3, vmin=0, vmax=5)
-        
+                            c=colores_puntos, cmap=cmap, s=20, alpha=0.75,
+                            edgecolors='black', linewidths=0.3, vmin=0, vmax=5, zorder=3)
         # Centroides con color según peligrosidad
         centroid_colors = [peligrosidad_cluster[i]['nivel'] for i in range(K_opt)]
         centroid_sizes = [peligrosidad_cluster[i]['num_delitos'] for i in range(K_opt)]
         
-        # Normalizar tamaños (min=500, max=2000)
-        size_min, size_max = 500, 2000
+        # Normalizar tamaños (min=200, max=800)
+        size_min, size_max = 100, 200
         if max(centroid_sizes) > min(centroid_sizes):
             sizes_norm = [
                 size_min + (s - min(centroid_sizes)) / (max(centroid_sizes) - min(centroid_sizes)) * (size_max - size_min)
@@ -478,14 +488,13 @@ class Kmeans():
             sizes_norm = [size_min] * len(centroid_sizes)
         
         ax.scatter(centroids[:, 0], centroids[:, 1], 
-                c=centroid_colors, cmap=cmap, marker='*', s=sizes_norm, 
-                edgecolors='white', linewidths=3, zorder=4, vmin=0, vmax=5,
+                c="black", cmap=cmap, marker='*', s=sizes_norm, 
+                edgecolors='white', linewidths=1.2, zorder=4, vmin=0, vmax=5,
                 label=f'Centroides (n={K_opt})')
-        
         # Configuración
         ax.set_title(
-            f'Mapa de Calor de Peligrosidad por Clustering (K-Means Ponderado, K={K_opt})\n' + 
-            f'Santiago de Cali - {len(events_proj):,} delitos agrupados en {K_opt} zonas',
+            f'Danger Heatmap by Clustering\n' + 
+            f'Santiago de Cali - {len(events_proj):,} crimes grouped in {K_opt} zones',
             fontsize=16, fontweight='bold'
         )
         ax.set_xlabel('X (m)', fontsize=12)
@@ -495,10 +504,10 @@ class Kmeans():
         ax.set_aspect('equal', adjustable='box')
         
         # Colorbar
-        cbar = plt.colorbar(scatter, ax=ax, label='Nivel de Peligrosidad', 
+        cbar = plt.colorbar(scatter, ax=ax, label="Level of Insecurity", 
                         shrink=0.7, ticks=[0, 1, 2, 3, 4, 5])
-        cbar.ax.set_yticklabels(['Sin datos', 'Muy Bajo\n(0-20%)', 'Bajo\n(20-40%)',
-                                'Medio\n(40-60%)', 'Alto\n(60-80%)', 'Muy Alto\n(80-100%)'])
+        cbar.ax.set_yticklabels(['No data', 'Very Low\n(0-20%)', 'Low\n(20-40%)',
+                            'Medium\n(40-60%)', 'High\n(60-80%)', 'Very High\n(80-100%)'])
         
         plt.tight_layout()
         
@@ -512,43 +521,6 @@ class Kmeans():
         print(f"\n✓ Imagen guardada: {out_img}")
         
         plt.show()
-        
-        # ========== EXPORTAR RESULTADOS ==========
-        print("\n📁 EXPORTANDO RESULTADOS")
-        print("─"*70)
-        
-        # CSV de centroides con peligrosidad
-        centroides_df = pd.DataFrame(centroids, columns=['x', 'y'])
-        centroides_df['cluster_id'] = range(K_opt)
-        centroides_df['num_delitos'] = [peligrosidad_cluster[i]['num_delitos'] for i in range(K_opt)]
-        centroides_df['score_total'] = [peligrosidad_cluster[i]['score_total'] for i in range(K_opt)]
-        centroides_df['score_promedio'] = [peligrosidad_cluster[i]['score_promedio'] for i in range(K_opt)]
-        centroides_df['nivel_peligrosidad'] = [peligrosidad_cluster[i]['nivel'] for i in range(K_opt)]
-        centroides_df['etiqueta_nivel'] = centroides_df['nivel_peligrosidad'].map(lambda x: etiquetas[x])
-        
-        out_csv = out_dir / "centroides_peligrosidad.csv"
-        centroides_df.to_csv(out_csv, index=False, encoding='utf-8')
-        print(f"✓ Centroides con peligrosidad: {out_csv}")
-        print(f"  Columnas: x, y, cluster_id, num_delitos, score_total, nivel_peligrosidad, etiqueta_nivel")
-        
-        # CSV de delitos con cluster y nivel
-        out_delitos = out_dir / "delitos_con_peligrosidad.csv"
-        events_export = events_proj[['geom_point', 'cluster', 'categoria', 'peso_delito']].copy()
-        events_export['nivel_cluster'] = events_export['cluster'].map(lambda x: peligrosidad_cluster[x]['nivel'])
-        events_export['etiqueta_nivel'] = events_export['nivel_cluster'].map(lambda x: etiquetas[x])
-        events_export.to_csv(out_delitos, index=False, encoding='utf-8')
-        print(f"✓ Delitos clasificados: {out_delitos}")
-        
-        print("\n" + "="*70)
-        print("✅ K-MEANS CON PESOS COMPLETADO")
-        print("="*70)
-        
-        return {
-            'K_opt': K_opt,
-            'centroids': centroids,
-            'peligrosidad_cluster': peligrosidad_cluster,
-            'labels': labels
-        }
             
 
 if __name__ == "__main__":

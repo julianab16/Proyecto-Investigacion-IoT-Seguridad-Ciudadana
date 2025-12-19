@@ -283,17 +283,17 @@ for nombre_metodo, codigo in metodos.items():
             n_calls=50,
             n_initial_points=15,
             acq_func='EI',
-            random_state=42,
-            verbose=False
+            random_state=42
+                    
         )
+        
     else:
         resultado = forest_minimize(
             objetivo_wrapper,
             space,
             n_calls=50,
             n_initial_points=15,
-            random_state=42,
-            verbose=False
+            random_state=42
         )
     
     resultados_metodos[nombre_metodo] = {

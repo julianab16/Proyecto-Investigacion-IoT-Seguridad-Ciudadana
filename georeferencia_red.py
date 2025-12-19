@@ -395,10 +395,10 @@ class GeoreferenciaRedLoRaWAN(GeoreferenciaMapa):
         except Exception:
             pass
 
-        # Nodos IoT
+        # IoT Nodes
         if getattr(self, 'nodos_iot', None) is not None and len(self.nodos_iot) > 0:
             ax.scatter(self.nodos_iot[:, 0], self.nodos_iot[:, 1],
-                       c='blue', s=25, alpha=0.7, label=f'Nodos IoT ({len(self.nodos_iot)})',
+                       c='blue', s=25, alpha=0.7, label=f'IoT Nodes ({len(self.nodos_iot)})',
                        zorder=4, edgecolors='none')
 
         # Gateways K-Means
@@ -434,13 +434,13 @@ class GeoreferenciaRedLoRaWAN(GeoreferenciaMapa):
                 pass
 
         # Etiquetas y estética
-        ax.set_xlabel("Coordenada X (m)", fontsize=12)
-        ax.set_ylabel("Coordenada Y (m)", fontsize=12)
-        ax.set_title("Comparativa de Gateways en Santiago de Cali: K-Means vs GA", fontsize=14, weight='bold', pad=12)
+        ax.set_xlabel("X Coordinate (meters)", fontsize=12)
+        ax.set_ylabel("Y Coordinate (meters)", fontsize=12)
+        ax.set_title("Comparison of Gateways in Santiago de Cali: K-Means vs GA", fontsize=14, weight='bold', pad=12)
 
         # Leyenda coherente
         handles = [
-            Line2D([0], [0], marker='o', color='w', markerfacecolor='cornflowerblue', markersize=8, label=f'Nodos IoT ({len(self.nodos_iot) if getattr(self, "nodos_iot", None) is not None else 0})'),
+            Line2D([0], [0], marker='o', color='w', markerfacecolor='cornflowerblue', markersize=8, label=f'IoT Nodes ({len(self.nodos_iot) if getattr(self, "nodos_iot", None) is not None else 0})'),
             Line2D([0], [0], marker='^', color='w', markerfacecolor='#FF1493', markersize=10, label=f'K-Means ({len(self.gateways_kmeans) if getattr(self, "gateways_kmeans", None) is not None else 0})'),
             Line2D([0], [0], marker='o', color='w', markerfacecolor='black', markersize=9, label=f'GA ({len(self.gateways_ga) if getattr(self, "gateways_ga", None) is not None else 0})')
         ]
@@ -488,10 +488,10 @@ class GeoreferenciaRedLoRaWAN(GeoreferenciaMapa):
                 ax.plot([nodo[0], gw[0]], [nodo[1], gw[1]], 
                        'gray', alpha=0.15, linewidth=0.5, zorder=3)
         
-        # Nodos IoT
+        # IoT Nodes
         if self.nodos_iot is not None:
             ax.scatter(self.nodos_iot[:, 0], self.nodos_iot[:, 1],
-                      c='blue', s=25, alpha=0.7, label=f'Nodos IoT ({len(self.nodos_iot)})', 
+                      c='blue', s=25, alpha=0.7, label=f'IoT Nodes ({len(self.nodos_iot)})', 
                       zorder=4, edgecolors='darkblue', linewidth=0.5)
         
         # Gateways LoRaWAN
@@ -511,17 +511,18 @@ class GeoreferenciaRedLoRaWAN(GeoreferenciaMapa):
         # Barra de color
         sm = plt.cm.ScalarMappable(cmap=cmap, norm=plt.Normalize(vmin=0, vmax=5))
         sm.set_array([])
-        cbar = plt.colorbar(sm, ax=ax, label="Nivel de Inseguridad", shrink=0.6, pad=0.02)
+        cbar = plt.colorbar(sm, ax=ax, label="Level of Insecurity", shrink=0.6, pad=0.02)
         cbar.set_ticks([0, 1, 2, 3, 4, 5])
-        cbar.set_ticklabels(['Sin datos', 'Muy Bajo', 'Bajo', 'Medio', 'Alto', 'Muy Alto'])
+        cbar.set_ticklabels(['No data', 'Very Low\n(0-20%)', 'Low\n(20-40%)',
+                            'Medium\n(40-60%)', 'High\n(60-80%)', 'Very High\n(80-100%)'])
         
         # Título y etiquetas
-        ax.set_xlabel("Coordenada X (metros)", fontsize=12, fontweight='bold')
-        ax.set_ylabel("Coordenada Y (metros)", fontsize=12, fontweight='bold')
-        ax.set_title("Red LoRaWAN Optimizada para Seguridad Ciudadana",
+        ax.set_xlabel("X Coordinate (meters)", fontsize=12, fontweight='bold')
+        ax.set_ylabel("Y Coordinate (meters)", fontsize=12, fontweight='bold')
+        ax.set_title("Optimized LoRaWAN Network for Public Safety",
                     fontsize=14, fontweight='bold', pad=10)
         handles = [
-            Line2D([0], [0], marker='o', color='w', markerfacecolor='cornflowerblue', markersize=8, label=f'Nodos IoT ({len(self.nodos_iot) if getattr(self, "nodos_iot", None) is not None else 0})'),
+            Line2D([0], [0], marker='o', color='w', markerfacecolor='cornflowerblue', markersize=8, label=f'IoT Nodes ({len(self.nodos_iot) if getattr(self, "nodos_iot", None) is not None else 0})'),
             Line2D([0], [0], marker='*', color='w', markerfacecolor='red',  markersize=16, label=f'Gateways LoRaWAN ({len(self.gateways) if getattr(self, "gateways_kmeans", None) is not None else 0})')
         ]
         ax.legend(handles=handles, loc='upper right', fontsize=11, frameon=True, edgecolor='black', bbox_to_anchor=(0.4, 0.98))
