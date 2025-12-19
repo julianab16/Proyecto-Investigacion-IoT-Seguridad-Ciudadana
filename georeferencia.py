@@ -434,16 +434,16 @@ class GeoreferenciaMapa:
         # Barra de color
         sm = plt.cm.ScalarMappable(cmap=cmap, norm=plt.Normalize(vmin=0, vmax=5))
         sm.set_array([])
-        cbar = plt.colorbar(sm, ax=ax, label="Nivel de Inseguridad", shrink=0.7, pad=0.02)
+        cbar = plt.colorbar(sm, ax=ax, label="Level of Insecurity", shrink=0.7, pad=0.02)
         cbar.set_ticks([0, 1, 2, 3, 4, 5])
-        cbar.set_ticklabels(['Sin datos', 'Muy Bajo\n(0-20%)', 'Bajo\n(20-40%)',
-                            'Medio\n(40-60%)', 'Alto\n(60-80%)', 'Muy Alto\n(80-100%)'])
+        cbar.set_ticklabels(['No data', 'Very Low\n(0-20%)', 'Low\n(20-40%)',
+                            'Medium\n(40-60%)', 'High\n(60-80%)', 'Very High\n(80-100%)'])
         
         # Título
-        plt.title("Mapa de Calor de Seguridad con Enfoque de Género\nSantiago de Cali", 
+        plt.title("Security Heatmap with Gender Focus\nSantiago de Cali", 
                  fontsize=16, pad=20, weight='bold')
-        plt.xlabel("Coordenada X (metros)", fontsize=11)
-        plt.ylabel("Coordenada Y (metros)", fontsize=11)
+        plt.xlabel("X Coordinate (meters)", fontsize=11)
+        plt.ylabel("Y Coordinate (meters)", fontsize=11)
         
         # Panel de estadísticas
         dentro = self.gdf_casos[self.gdf_casos.within(self.cali.geometry.iloc[0])]
