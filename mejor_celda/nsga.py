@@ -134,10 +134,8 @@ def calcular_metricas(puntos_gdf, cali_gdf, h_m):
     grid = gpd.GeoDataFrame(geometry=celdas, crs=cali_gdf.crs)
     
     # Contar puntos por celda
-    join = gpd.sjoin(grid, puntos_gdf, how="left", predicate="contains")
-    conteo = join.groupby(join.index).size() # no se ierden los valores de los bordes
-
-    #conteo = join.groupby("index_right").size()
+    join = gpd.sjoin(puntos_gdf, grid, how="inner", predicate="within")
+    conteo = join.groupby("index_right").size()
     
     # Crear array completo con ceros para celdas vacías
     conteo_completo = np.zeros(len(grid))
@@ -146,9 +144,8 @@ def calcular_metricas(puntos_gdf, cali_gdf, h_m):
     # Calcular métricas
     # f1: Varianza de densidad
     densidad = conteo_completo / (h_m**2 / 1e6)  # eventos por km²
-    #varianza = float(np.var(densidad))
-    varianza = np.var(conteo_completo) # mejor
-
+    varianza = float(np.var(densidad))
+    
     # f2: Número de celdas
     num_celdas = float(len(grid))
     
@@ -179,8 +176,7 @@ class OptimizacionMapaCalor(ElementwiseProblem):
         f2 = num_celdas / 100
         f3 = pct_vacias
         
-        #out["F"] = np.array([f1, f2, f3], dtype=float)
-        out["F"] = np.array([varianza, num_celdas, pct_vacias])
+        out["F"] = np.array([f1, f2, f3], dtype=float)
 
 
 # ========== EJECUTAR NSGA-II ==========
@@ -194,7 +190,7 @@ algorithm = NSGA2(
     eliminate_duplicates=True
 )
 
-termination = get_termination("n_gen", 5)
+termination = get_termination("n_gen", 8)
 
 res = minimize(
     problem,
@@ -281,18 +277,6 @@ print("=" * 70)
 print("\nANÁLISIS COMPARATIVO:")
 print("-" * 70)
 
-# Comparar con tamaños estándar
-tamaños_referencia = [50, 100, 110, 150, 200, 250]
-print(f"{'Tamaño':<12} {'N° Celdas':<12} {'Eventos/Celda':<18} {'% Vacías':<12}")
-print("-" * 70)
-
-for tam in tamaños_referencia:
-    var, n_celdas, pct_vac = calcular_metricas(puntos, cali, tam)
-    eventos = len(puntos) / n_celdas
-    marca = " ← ÓPTIMO" if abs(tam - mejor['h']) < 20 else ""
-    print(f"{tam:>7.0f} m    {int(n_celdas):>8,}    "
-          f"{eventos:>13.2f}      {pct_vac:>8.1f}%{marca}")
-
 # ========== VISUALIZACIÓN ==========
 print("\n[5/5] Generando visualización comparativa...")
 
@@ -300,10 +284,10 @@ fig, axes = plt.subplots(2, 2, figsize=(16, 12))
 
 # Gráfico 1: Frente de Pareto (Varianza vs Número de celdas)
 ax1 = axes[0, 0]
-scatter1 = ax1.scatter(F[:, 1] * 100, F[:, 0] * 1000, 
+scatter1 = ax1.scatter(F[:, 1], F[:, 0], 
                        c=F[:, 2], cmap='RdYlGn_r', s=100, alpha=0.7)
-ax1.set_xlabel('Número de Celdas', fontsize=11)
-ax1.set_ylabel('Varianza de Densidad', fontsize=11)
+ax1.set_xlabel('N° Celdas (normalizado)', fontsize=11)
+ax1.set_ylabel('Varianza (normalizada)', fontsize=11)
 ax1.set_title('Frente de Pareto: Varianza vs N° Celdas', fontsize=12, weight='bold')
 plt.colorbar(scatter1, ax=ax1, label='% Celdas Vacías')
 ax1.grid(True, alpha=0.3)

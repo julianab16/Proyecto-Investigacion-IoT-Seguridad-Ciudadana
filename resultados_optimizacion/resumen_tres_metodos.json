@@ -1,26 +1,26 @@
 {
   "valores_optimos": {
-    "NSGA-II": 237.8477376922439,
+    "NSGA-II": 93.25269480514103,
     "Gaussian Process": 160.03263054333212,
     "Random Forest": 169.06552874944572
   },
   "estadisticas": {
-    "promedio": 188.98196566167394,
-    "desviacion": 34.74954263112183,
-    "rango": 77.81510714891178,
-    "cv_pct": 18.38775594774604
+    "promedio": 140.78361803263962,
+    "desviacion": 33.81114027106329,
+    "rango": 75.81283394430469,
+    "cv_pct": 24.016388230074064
   },
   "zonas": {
-    "ruido": "h < 150m",
-    "optimo": "150m - 243m",
-    "sobreagregacion": "h > 243m"
+    "ruido": "h < 83m",
+    "optimo": "83m - 174m",
+    "sobreagregacion": "h > 174m"
   },
   "recomendacion": "160.03m",
   "mejor_metodo": "Gaussian Process",
   "scores_metodos": {
     "NSGA-II": {
-      "h": 237.8477376922439,
-      "score": 0.30686881174754
+      "h": 93.25269480514103,
+      "score": 0.20805841019681992
     },
     "Gaussian Process": {
       "h": 160.03263054333212,
