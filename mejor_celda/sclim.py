@@ -46,6 +46,7 @@ def cargar_csv(archivo):
 # ========== CARGA DE DATOS ==========
 print("\n[1/5] Cargando archivos de delitos...")
 
+base_dir = Path(__file__).resolve().parent.parent / "data_base"
 datasets = []
 archivos_a_buscar = [
     'Hurtos_fiscalia.csv',
@@ -56,16 +57,15 @@ archivos_a_buscar = [
     'Violencia_Intrafamiliar_fiscalia.csv',
 ]
 
+
 archivos_cargados = 0
 for archivo in archivos_a_buscar:
-    if os.path.isfile(archivo):
-        df = cargar_csv(archivo)
+    ruta = base_dir / archivo
+    if ruta.is_file():
+        df = cargar_csv(str(ruta))
         if df is not None and len(df) > 0:
             datasets.append(df)
-            print(f"  ✓ {archivo}: {len(df):,} registros")
             archivos_cargados += 1
-    else:
-        print(f"  - Ignorado (no existe): {archivo}")
 
 
 if archivos_cargados == 0:
@@ -251,7 +251,7 @@ def funcion_objetivo_compuesta(h):
     return score_total
 
 # ========== ESPACIO DE BÚSQUEDA ==========
-space = [Real(50.0, 130.0, name='h')]
+space = [Real(50.0, 250.0, name='h')]
 
 @use_named_args(space)
 def objetivo_wrapper(h):
@@ -476,7 +476,7 @@ print("[7/6] Exportando resultados principales...")
 from pathlib import Path
 import json
 
-resultados_dir = Path(__file__).resolve().parent / "resultados_optimizacion"
+resultados_dir = Path(__file__).resolve().parent.parent / "resultados_optimizacion"
 resultados_dir.mkdir(exist_ok=True)
 
 # 1. Exportar mejorcelda
@@ -496,6 +496,10 @@ for nombre, datos in resultados_metodos.items():
         'h_optimo': float(datos['h_optimo']),
         'score_optimo': float(datos['score_optimo'])
     }
+
+out_config = resultados_dir / "metodos_optimizacion.json"
+out_config.write_text(json.dumps(metodos_export, indent=2))
+print(f"✓ Exportado: {out_config}")
 
 print(f"\n✓ Archivos exportados en: {resultados_dir}")
 print("=" * 80)

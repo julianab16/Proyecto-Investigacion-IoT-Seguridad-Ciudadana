@@ -1,0 +1,61 @@
+{
+  "mejor_metodo": "Gaussian Process",
+  "score_mejor": 58.18158138799063,
+  "h_mejor": 123.45084259064676,
+  "comparacion": [
+    {
+      "h": 128.44516322828386,
+      "n_celdas": 7793,
+      "eventos_por_celda": 15.560374695239318,
+      "pct_vacias": 12.93468497369434,
+      "varianza": 3562477.319845058,
+      "std_dev": 1887.4526006883082,
+      "cv": 2.001204694218092,
+      "min_eventos": 1,
+      "max_eventos": 1663,
+      "mediana_eventos": 13.0,
+      "q25": 7.0,
+      "q75": 22.0,
+      "iqr": 15.0,
+      "metodo": "NSGA-II"
+    },
+    {
+      "h": 123.45084259064676,
+      "n_celdas": 8397,
+      "eventos_por_celda": 14.441109920209598,
+      "pct_vacias": 12.63546504704061,
+      "varianza": 4180529.936280063,
+      "std_dev": 2044.6344260723145,
+      "cv": 2.1577603659991196,
+      "min_eventos": 1,
+      "max_eventos": 1863,
+      "mediana_eventos": 12.0,
+      "q25": 6.0,
+      "q75": 20.0,
+      "iqr": 14.0,
+      "metodo": "Gaussian Process"
+    },
+    {
+      "h": 125.08421672126003,
+      "n_celdas": 8218,
+      "eventos_por_celda": 14.75565831102458,
+      "pct_vacias": 12.922852275492822,
+      "varianza": 4116725.131988418,
+      "std_dev": 2028.9714468144734,
+      "cv": 2.151405980998015,
+      "min_eventos": 1,
+      "max_eventos": 1862,
+      "mediana_eventos": 13.0,
+      "q25": 6.0,
+      "q75": 21.0,
+      "iqr": 15.0,
+      "metodo": "Random Forest"
+    }
+  ],
+  "criterios_evaluacion": {
+    "varianza": "Menor es mejor (homogeneidad)",
+    "pct_vacias": "Menor es mejor (cobertura)",
+    "eventos_por_celda": "Cercano a 10 es ideal",
+    "cv": "Entre 1.0-2.5 es ideal (deteccion hotspots)"
+  }
+}
