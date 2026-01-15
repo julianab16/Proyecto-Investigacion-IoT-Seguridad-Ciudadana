@@ -134,8 +134,10 @@ def calcular_metricas(puntos_gdf, cali_gdf, h_m):
     grid = gpd.GeoDataFrame(geometry=celdas, crs=cali_gdf.crs)
     
     # Contar puntos por celda
-    join = gpd.sjoin(puntos_gdf, grid, how="inner", predicate="within")
-    conteo = join.groupby("index_right").size()
+    join = gpd.sjoin(grid, puntos_gdf, how="left", predicate="contains")
+    conteo = join.groupby(join.index).size() # no se ierden los valores de los bordes
+
+    #conteo = join.groupby("index_right").size()
     
     # Crear array completo con ceros para celdas vacías
     conteo_completo = np.zeros(len(grid))
@@ -144,21 +146,14 @@ def calcular_metricas(puntos_gdf, cali_gdf, h_m):
     # Calcular métricas
     # f1: Varianza de densidad
     densidad = conteo_completo / (h_m**2 / 1e6)  # eventos por km²
-    varianza = float(np.var(densidad))
-    
+    #varianza = float(np.var(densidad))
+    varianza = np.var(conteo_completo) # mejor
+
     # f2: Número de celdas
     num_celdas = float(len(grid))
     
     # f3: Porcentaje de celdas vacías
     pct_vacias = float((conteo_completo == 0).sum() / len(grid) * 100)
-    
-    # Penalizar configuraciones no óptimas
-    if pct_vacias > 80:
-        varianza *= 2
-    
-    eventos_por_celda = len(puntos_gdf) / num_celdas
-    if eventos_por_celda < 3:
-        varianza *= 1.5
     
     return varianza, num_celdas, pct_vacias
 
@@ -172,7 +167,7 @@ class OptimizacionMapaCalor(ElementwiseProblem):
             n_var=1,
             n_obj=3,
             xl=np.array([50.0]),   # Mínimo
-            xu=np.array([130.0])   # Máximo 
+            xu=np.array([250.0])   # Máximo 
         )
     
     def _evaluate(self, x, out, *args, **kwargs):
@@ -184,7 +179,9 @@ class OptimizacionMapaCalor(ElementwiseProblem):
         f2 = num_celdas / 100
         f3 = pct_vacias
         
-        out["F"] = np.array([f1, f2, f3], dtype=float)
+        #out["F"] = np.array([f1, f2, f3], dtype=float)
+        out["F"] = np.array([varianza, num_celdas, pct_vacias])
+
 
 # ========== EJECUTAR NSGA-II ==========
 print("\n[4/4] Ejecutando optimización NSGA-II...")
@@ -197,7 +194,7 @@ algorithm = NSGA2(
     eliminate_duplicates=True
 )
 
-termination = get_termination("n_gen", 8)
+termination = get_termination("n_gen", 5)
 
 res = minimize(
     problem,
@@ -285,7 +282,7 @@ print("\nANÁLISIS COMPARATIVO:")
 print("-" * 70)
 
 # Comparar con tamaños estándar
-tamaños_referencia = [50, 100, 110, 150, 200, 250, 300, 400, 500]
+tamaños_referencia = [50, 100, 110, 150, 200, 250]
 print(f"{'Tamaño':<12} {'N° Celdas':<12} {'Eventos/Celda':<18} {'% Vacías':<12}")
 print("-" * 70)
 
@@ -369,7 +366,7 @@ print(f"  LADO_HEX = {mejor['h']:.1f}  # metros\n")
 from pathlib import Path
 import json
 
-resultados_dir = Path(__file__).resolve().parent / "resultados_optimizacion"
+resultados_dir = Path(__file__).resolve().parent.parent / "resultados_optimizacion"
 resultados_dir.mkdir(exist_ok=True)
 
 # 1. Exportar mejorcelda
