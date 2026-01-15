@@ -1,0 +1,34 @@
+{
+  "valores_optimos": {
+    "NSGA-II": 93.25269480514103,
+    "Gaussian Process": 160.03263054333212,
+    "Random Forest": 169.06552874944572
+  },
+  "estadisticas": {
+    "promedio": 140.78361803263962,
+    "desviacion": 33.81114027106329,
+    "rango": 75.81283394430469,
+    "cv_pct": 24.016388230074064
+  },
+  "zonas": {
+    "ruido": "h < 83m",
+    "optimo": "83m - 174m",
+    "sobreagregacion": "h > 174m"
+  },
+  "recomendacion": "160.03m",
+  "mejor_metodo": "Gaussian Process",
+  "scores_metodos": {
+    "NSGA-II": {
+      "h": 93.25269480514103,
+      "score": 0.20805841019681992
+    },
+    "Gaussian Process": {
+      "h": 160.03263054333212,
+      "score": 0.16728162139210728
+    },
+    "Random Forest": {
+      "h": 169.06552874944572,
+      "score": 0.17660455076097897
+    }
+  }
+}

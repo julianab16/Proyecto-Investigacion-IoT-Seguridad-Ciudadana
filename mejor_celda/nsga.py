@@ -152,14 +152,6 @@ def calcular_metricas(puntos_gdf, cali_gdf, h_m):
     # f3: Porcentaje de celdas vacías
     pct_vacias = float((conteo_completo == 0).sum() / len(grid) * 100)
     
-    # Penalizar configuraciones no óptimas
-    if pct_vacias > 80:
-        varianza *= 2
-    
-    eventos_por_celda = len(puntos_gdf) / num_celdas
-    if eventos_por_celda < 3:
-        varianza *= 1.5
-    
     return varianza, num_celdas, pct_vacias
 
 # ========== PROBLEMA DE OPTIMIZACIÓN ==========
@@ -172,7 +164,7 @@ class OptimizacionMapaCalor(ElementwiseProblem):
             n_var=1,
             n_obj=3,
             xl=np.array([50.0]),   # Mínimo
-            xu=np.array([130.0])   # Máximo 
+            xu=np.array([250.0])   # Máximo 
         )
     
     def _evaluate(self, x, out, *args, **kwargs):
@@ -185,6 +177,7 @@ class OptimizacionMapaCalor(ElementwiseProblem):
         f3 = pct_vacias
         
         out["F"] = np.array([f1, f2, f3], dtype=float)
+
 
 # ========== EJECUTAR NSGA-II ==========
 print("\n[4/4] Ejecutando optimización NSGA-II...")
@@ -284,18 +277,6 @@ print("=" * 70)
 print("\nANÁLISIS COMPARATIVO:")
 print("-" * 70)
 
-# Comparar con tamaños estándar
-tamaños_referencia = [50, 100, 110, 150, 200, 250, 300, 400, 500]
-print(f"{'Tamaño':<12} {'N° Celdas':<12} {'Eventos/Celda':<18} {'% Vacías':<12}")
-print("-" * 70)
-
-for tam in tamaños_referencia:
-    var, n_celdas, pct_vac = calcular_metricas(puntos, cali, tam)
-    eventos = len(puntos) / n_celdas
-    marca = " ← ÓPTIMO" if abs(tam - mejor['h']) < 20 else ""
-    print(f"{tam:>7.0f} m    {int(n_celdas):>8,}    "
-          f"{eventos:>13.2f}      {pct_vac:>8.1f}%{marca}")
-
 # ========== VISUALIZACIÓN ==========
 print("\n[5/5] Generando visualización comparativa...")
 
@@ -303,10 +284,10 @@ fig, axes = plt.subplots(2, 2, figsize=(16, 12))
 
 # Gráfico 1: Frente de Pareto (Varianza vs Número de celdas)
 ax1 = axes[0, 0]
-scatter1 = ax1.scatter(F[:, 1] * 100, F[:, 0] * 1000, 
+scatter1 = ax1.scatter(F[:, 1], F[:, 0], 
                        c=F[:, 2], cmap='RdYlGn_r', s=100, alpha=0.7)
-ax1.set_xlabel('Número de Celdas', fontsize=11)
-ax1.set_ylabel('Varianza de Densidad', fontsize=11)
+ax1.set_xlabel('N° Celdas (normalizado)', fontsize=11)
+ax1.set_ylabel('Varianza (normalizada)', fontsize=11)
 ax1.set_title('Frente de Pareto: Varianza vs N° Celdas', fontsize=12, weight='bold')
 plt.colorbar(scatter1, ax=ax1, label='% Celdas Vacías')
 ax1.grid(True, alpha=0.3)
@@ -369,7 +350,7 @@ print(f"  LADO_HEX = {mejor['h']:.1f}  # metros\n")
 from pathlib import Path
 import json
 
-resultados_dir = Path(__file__).resolve().parent / "resultados_optimizacion"
+resultados_dir = Path(__file__).resolve().parent.parent / "resultados_optimizacion"
 resultados_dir.mkdir(exist_ok=True)
 
 # 1. Exportar mejorcelda

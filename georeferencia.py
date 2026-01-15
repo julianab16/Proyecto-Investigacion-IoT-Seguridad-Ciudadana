@@ -502,15 +502,9 @@ if __name__ == "__main__":
         mejorcelda = config['mejorcelda']
         mejor_metodo_nombre = config['mejor_metodo']
     
-    with open(resultados_dir / "metodos_optimizacion.json") as f:
-        metodos_optimizados = json.load(f)
-        print(f"\nMejor tamaño de celda: {mejorcelda} m")
 
     print(f"\nMejor tamaño de celda: {mejorcelda} m")
     print(f"Método ganador: {mejor_metodo_nombre}")
-    for nombre in metodos_optimizados:
-        h_optimo = metodos_optimizados[nombre]['h_optimo']
-        print(f"Método: {nombre}, Tamaño de celda: {h_optimo:.1f}m")
     print()
     
     # Definir pesos de delitos
