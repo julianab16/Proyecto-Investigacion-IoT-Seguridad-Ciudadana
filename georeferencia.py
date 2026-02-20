@@ -195,7 +195,7 @@ class GeoreferenciaMapa:
             
             df['archivo_fuente'] = archivo.split('/')[-1]
             
-            print(f"    {len(df):,} registros procesados - Categoría: {df['categoria'].iloc[0]}")
+            print(f"    {len(df):,} registros procesados - Archivo: {df['categoria'].iloc[0]}")
             return df
             
         except Exception as e:
