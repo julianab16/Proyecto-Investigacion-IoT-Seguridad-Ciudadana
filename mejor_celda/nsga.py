@@ -209,6 +209,18 @@ print("=" * 70)
 X = res.X
 F = res.F
 
+# Calcular número total de evaluaciones
+pop_size = 50
+n_generaciones = 8
+total_evaluaciones = pop_size * n_generaciones
+soluciones_pareto = len(X)
+
+print(f"\n📊 Información del algoritmo NSGA-II:")
+print(f"   • Tamaño de población: {pop_size}")
+print(f"   • Número de generaciones: {n_generaciones}")
+print(f"   • Total de evaluaciones: {total_evaluaciones}")
+print(f"   • Soluciones en frente de Pareto: {soluciones_pareto}")
+
 # Calcular métricas detalladas para cada solución
 resultados = []
 for h in X[:, 0]:
@@ -234,11 +246,21 @@ for _, row in resultados_df.head(15).iterrows():
           f"{row['eventos_x_celda']:>13.2f}      {row['pct_vacias']:>8.1f}%    "
           f"{row['varianza']:>12.2f}")
 
-# ========== SELECCIONAR MEJOR SOLUCIÓN ==========
-# Criterios de selección balanceados:
-# 1. Entre 5-15 eventos por celda (óptimo para visualización)
-# 2. Menos del 70% de celdas vacías
-# 3. Número de celdas razonable (no demasiadas ni muy pocas)
+# ========== SELECCIONAR MEJOR SOLUCIÓN DEL FRENTE DE PARETO ==========
+print("\n" + "=" * 70)
+print("SELECCIÓN DE SOLUCIÓN ÓPTIMA DEL FRENTE DE PARETO")
+print("=" * 70)
+
+print(f"\n📊 Configuración del algoritmo NSGA-II:")
+print(f"   • Tamaño de población: {pop_size}")
+print(f"   • Número de generaciones: {n_generaciones}")
+print(f"   • Evaluaciones totales: {total_evaluaciones}")
+print(f"   • Soluciones en frente de Pareto: {soluciones_pareto}")
+
+print(f"\n🔍 Criterios de selección de la solución final:")
+print(f"   1. Eventos por celda: entre 5 y 15 (ideal: 8)")
+print(f"   2. Celdas vacías: < 70%")
+print(f"   3. Número de celdas: razonable para visualización")
 
 # Filtrar soluciones válidas
 validas = resultados_df[
@@ -247,21 +269,31 @@ validas = resultados_df[
     (resultados_df['pct_vacias'] < 70)
 ]
 
+print(f"\n   ✓ Soluciones que cumplen criterios estrictos: {len(validas)}")
+
 if len(validas) == 0:
+    print(f"   ⚠️  Ninguna solución cumple criterios estrictos, relajando...")
     # Si no hay soluciones que cumplan criterios estrictos, relajar
     validas = resultados_df[
         (resultados_df['eventos_x_celda'] >= 3) & 
         (resultados_df['pct_vacias'] < 75)
     ]
+    print(f"   ✓ Soluciones con criterios relajados: {len(validas)}")
 
 if len(validas) > 0:
-    # Elegir la que tenga eventos/celda más cercano a 8 (valor ideal)
-    mejor_idx = validas['eventos_x_celda'].sub(8).abs().idxmin()
+    # Elegir la que tenga eventos/celda más cercano a diez (valor ideal)
+    diferencias = validas['eventos_x_celda'].sub(10).abs()
+    mejor_idx = diferencias.idxmin()
     mejor = validas.loc[mejor_idx]
+    criterio_usado = "más cercano a 8 eventos/celda (ideal)"
 else:
     # Fallback: mejor por eventos/celda
     mejor_idx = resultados_df['eventos_x_celda'].idxmax()
     mejor = resultados_df.loc[mejor_idx]
+    criterio_usado = "máximo eventos/celda (fallback)"
+
+print(f"\n   🎯 Solución seleccionada por: {criterio_usado}")
+print(f"   📍 Distancia al ideal (8 eventos/celda): {abs(mejor['eventos_x_celda'] - 8):.2f}")
 
 print("\n" + "=" * 70)
 print("★ RECOMENDACIÓN ÓPTIMA ★")
@@ -340,7 +372,8 @@ print("✓ OPTIMIZACIÓN COMPLETADA")
 print("=" * 70)
 print(f"\nResumen:")
 print(f"  • Total de eventos analizados: {len(puntos):,}")
-print(f"  • Soluciones exploradas: {len(resultados_df)}")
+print(f"  • Evaluaciones realizadas (NSGA-II): {total_evaluaciones}")
+print(f"  • Soluciones en frente de Pareto: {soluciones_pareto}")
 print(f"  • Tamaño óptimo de celda: {mejor['h']:.1f} metros")
 print(f"  • Cobertura del mapa: {100 - mejor['pct_vacias']:.1f}%")
 print("\nUsa este valor en tu código de georeferenciación:")

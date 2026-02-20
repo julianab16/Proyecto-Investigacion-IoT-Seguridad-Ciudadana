@@ -4,6 +4,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 import numpy as np
+import pandas as pd
 from shapely.geometry import Point
 from matplotlib.lines import Line2D
 
@@ -64,9 +65,6 @@ class GeoreferenciaRedLoRaWAN(GeoreferenciaMapa):
             nodos_coords: array (N, 2) con coordenadas de nodos IoT
         """
         print("\n[🔧] Generando nodos IoT desde datos de delitos...")
-        
-        if self.grid_cali is None:
-            raise ValueError("Ejecuta ejecutar_pipeline_georeferenciacion() primero")
         
         nodos_coords = []
         
@@ -302,7 +300,67 @@ class GeoreferenciaRedLoRaWAN(GeoreferenciaMapa):
         print(f"\n  ✓ {len(self.gateways)} gateways optimizados con Algoritmo Genético")
         print(f"  • K óptimo determinado: {optimal_k}")
 
+
+
         return self.gateways, self.assignments
+    
+    def guardar_gateways_ga_csv(self, nombre_archivo='gateways_ga.csv'):
+        """
+        Guarda las posiciones de los gateways del método GA en un archivo CSV
+        
+        Args:
+            nombre_archivo: nombre del archivo CSV a generar
+        """
+        if not hasattr(self, 'gateways_ga') or self.gateways_ga is None:
+            raise ValueError("Ejecuta optimizar_gateways_ga() primero")
+        
+        # Crear DataFrame con las posiciones en metros
+        df_gateways = pd.DataFrame(
+            self.gateways_ga,
+            columns=['x', 'y']
+        )
+        
+        # Agregar ID de gateway
+        df_gateways.insert(0, 'id', range(1, len(self.gateways_ga) + 1))
+        
+        # Guardar en la carpeta raíz del proyecto
+        output_path = Path(__file__).resolve().parent / nombre_archivo
+        df_gateways.to_csv(output_path, index=False)
+        
+        print(f"\n  ✓ Posiciones de gateways GA guardadas en: {output_path}")
+        print(f"  • Total de gateways: {len(self.gateways_ga)}")
+        print(f"  • Coordenadas guardadas en metros (sistema proyectado)")
+        
+        return output_path
+    
+    def guardar_nodos_iot_csv(self, nombre_archivo='nodos_iot.csv'):
+        """
+        Guarda las posiciones de los nodos IoT en un archivo CSV
+        
+        Args:
+            nombre_archivo: nombre del archivo CSV a generar
+        """
+        if self.nodos_iot is None:
+            raise ValueError("Ejecuta generar_nodos_iot_desde_delitos() primero")
+        
+        # Crear DataFrame con las posiciones en metros
+        df_nodos = pd.DataFrame(
+            self.nodos_iot,
+            columns=['x', 'y']
+        )
+        
+        # Agregar ID de nodo
+        df_nodos.insert(0, 'id', range(1, len(self.nodos_iot) + 1))
+        
+        # Guardar en la carpeta raíz del proyecto
+        output_path = Path(__file__).resolve().parent / nombre_archivo
+        df_nodos.to_csv(output_path, index=False)
+        
+        print(f"\n  ✓ Posiciones de nodos IoT guardadas en: {output_path}")
+        print(f"  • Total de nodos: {len(self.nodos_iot)}")
+        print(f"  • Coordenadas guardadas en metros (sistema proyectado)")
+        
+        return output_path
  
     def comparar_metodos(self, export_csv=True):
             """Usa metricas.LoRaWANMetricsEvaluator para evaluar KMeans vs GA y decidir cuál es mejor."""
@@ -640,6 +698,8 @@ if __name__ == "__main__":
     
     # ========== FASE 2: RED LoRaWAN ==========
     red_cali.generar_nodos_iot_desde_delitos(num_nodos_exacto=1000)
+    # Guardar posiciones de nodos en CSV
+    red_cali.guardar_nodos_iot_csv('nodos_iot.csv')
     
     # Ejecutar K-Means y guardar su mapa
     red_cali.optimizar_gateways_kmeans()
@@ -650,6 +710,8 @@ if __name__ == "__main__":
     
     # Ejecutar GA y guardar su mapa
     red_cali.optimizar_gateways_ga()
+    # Guardar posiciones de gateways GA en CSV
+    red_cali.guardar_gateways_ga_csv('gateways_ga.csv')
     # for visualization use ga results
     red_cali.gateways = red_cali.gateways_ga
     red_cali.assignments = red_cali.assignments_ga
