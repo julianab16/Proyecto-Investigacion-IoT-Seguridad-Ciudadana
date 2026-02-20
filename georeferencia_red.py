@@ -699,7 +699,7 @@ if __name__ == "__main__":
     # ========== FASE 2: RED LoRaWAN ==========
     red_cali.generar_nodos_iot_desde_delitos(num_nodos_exacto=1000)
     # Guardar posiciones de nodos en CSV
-    red_cali.guardar_nodos_iot_csv('nodos_iot.csv')
+    #red_cali.guardar_nodos_iot_csv('nodos_iot.csv')
     
     # Ejecutar K-Means y guardar su mapa
     red_cali.optimizar_gateways_kmeans()
@@ -711,7 +711,7 @@ if __name__ == "__main__":
     # Ejecutar GA y guardar su mapa
     red_cali.optimizar_gateways_ga()
     # Guardar posiciones de gateways GA en CSV
-    red_cali.guardar_gateways_ga_csv('gateways_ga.csv')
+    #red_cali.guardar_gateways_ga_csv('gateways_ga.csv')
     # for visualization use ga results
     red_cali.gateways = red_cali.gateways_ga
     red_cali.assignments = red_cali.assignments_ga
