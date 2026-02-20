@@ -3,12 +3,13 @@ import geopandas as gpd
 import numpy as np
 import matplotlib.pyplot as plt
 from shapely.geometry import box
+#pip install scikit-optimize
 from skopt import gp_minimize, forest_minimize
+from sklearn.ensemble import RandomForestRegressor
 from skopt.space import Real
 from skopt.utils import use_named_args
 import pandas as pd
 import warnings
-import glob
 from pathlib import Path
 import os
 warnings.filterwarnings('ignore')
@@ -287,15 +288,20 @@ for nombre_metodo, codigo in metodos.items():
                     
         )
         
-    else:
+    else:  # Random Forest
+        # Nota: forest_minimize usa ExtraTreesRegressor por defecto
+        # No se puede usar RandomForestRegressor con oob_score en este contexto
+        # porque genera conflictos con return_std en la optimización bayesiana
+        
         resultado = forest_minimize(
             objetivo_wrapper,
             space,
             n_calls=50,
             n_initial_points=15,
             random_state=42
-        )
+        ) 
     
+    # Guardar resultados
     resultados_metodos[nombre_metodo] = {
         'resultado': resultado,
         'historico': historico_evaluaciones.copy(),
@@ -303,9 +309,110 @@ for nombre_metodo, codigo in metodos.items():
         'score_optimo': resultado.fun
     }
     
+    # Mostrar resultados del método
     print(f"\n✅ {nombre_metodo} completado")
     print(f"   Tamaño óptimo: {resultado.x[0]:.1f} m")
     print(f"   Score: {resultado.fun:.3f}")
+    print(f"   Total de evaluaciones: {len(resultado.x_iters)}")
+    
+    # Mostrar información específica del Gaussian Process
+    if codigo == 'gp':
+        modelo_gp = resultado.models[-1]
+        
+        print(f"\n   📊 Parámetros del Gaussian Process:")
+        print(f"      • Kernel: {modelo_gp.kernel_}")
+        print(f"      • n_restarts_optimizer: {modelo_gp.n_restarts_optimizer}")
+        print(f"      • normalize_y: {modelo_gp.normalize_y}")
+        
+        # Calcular error de predicción: mu, sigma = model.predict(X, return_std=True)
+        X_evaluados = np.array(resultado.x_iters).reshape(-1, 1)
+        y_real = np.array(resultado.func_vals)
+        mu, sigma = modelo_gp.predict(X_evaluados, return_std=True)  # mu=predicción, sigma=incertidumbre
+        
+        errores_absolutos = np.abs(y_real - mu)
+        mae = np.mean(errores_absolutos)
+        mediana_error = np.median(errores_absolutos)
+        
+        # Analizar incertidumbre cerca del óptimo
+        idx_optimo = np.argmin(y_real)  # Índice del mejor valor real
+        h_optimo = X_evaluados[idx_optimo][0]
+        
+        # Calcular distancias al óptimo
+        distancias_al_optimo = np.abs(X_evaluados.flatten() - h_optimo)
+        
+        # Puntos cercanos al óptimo (dentro de 10m)
+        cercanos = distancias_al_optimo < 10
+        if np.sum(cercanos) > 0:
+            incertidumbre_cerca = np.mean(sigma[cercanos])
+        else:
+            incertidumbre_cerca = np.nan
+        
+        # Puntos lejanos al óptimo (más de 30m)
+        lejanos = distancias_al_optimo > 30
+        if np.sum(lejanos) > 0:
+            incertidumbre_lejos = np.mean(sigma[lejanos])
+        else:
+            incertidumbre_lejos = np.nan
+        
+        print(f"\n   📉 Error de predicción del modelo:")
+        print(f"      • MAE (promedio): {mae:.3f}")
+        print(f"      • Mediana del error: {mediana_error:.3f}")
+        print(f"      • Error mínimo: {np.min(errores_absolutos):.3f}")
+        print(f"      • Error máximo: {np.max(errores_absolutos):.3f}")
+        
+        print(f"\n   � Scores evaluados durante la optimización:")
+        print(f"      • Mejor score (mínimo): {np.min(y_real):.6f}")
+        print(f"      • Peor score (máximo): {np.max(y_real):.6f}")
+        print(f"      • Rango: {np.max(y_real) - np.min(y_real):.6f}")
+        
+        print(f"\n   �🎯 Análisis de incertidumbre (σ):")
+        print(f"      • Incertidumbre promedio global: {np.mean(sigma):.3f}")
+        if not np.isnan(incertidumbre_cerca):
+            print(f"      • Cerca del óptimo (<10m): {incertidumbre_cerca:.3f}")
+        if not np.isnan(incertidumbre_lejos):
+            print(f"      • Lejos del óptimo (>30m): {incertidumbre_lejos:.3f}")
+        if not np.isnan(incertidumbre_cerca) and not np.isnan(incertidumbre_lejos):
+            reduccion = ((incertidumbre_lejos - incertidumbre_cerca) / incertidumbre_lejos) * 100
+            print(f"      • Reducción de incertidumbre: {reduccion:.1f}%")
+        print(f"      ℹ️  La incertidumbre disminuye cerca del óptimo encontrado")
+    
+    # Mostrar parámetros del modelo Random Forest
+    if codigo == 'forest':
+        modelo_rf = resultado.models[-1]
+        params = modelo_rf.get_params()
+        tipo_modelo = type(modelo_rf).__name__
+        
+        # Formatear valores para mejor legibilidad
+        max_depth_str = params.get('max_depth') if params.get('max_depth') is not None else 'Sin límite'
+        max_features_str = params.get('max_features') if params.get('max_features') is not None else 'auto'
+        
+        print(f"\n   📊 Parámetros del modelo ({tipo_modelo}):")
+        print(f"      • n_estimators: {params.get('n_estimators', 'N/A')}")
+        print(f"      • max_depth: {max_depth_str}")
+        print(f"      • min_samples_split: {params.get('min_samples_split', 'N/A')}")
+        print(f"      • min_samples_leaf: {params.get('min_samples_leaf', 'N/A')}")
+        print(f"      • max_features: {max_features_str}")
+        print(f"      • bootstrap: {params.get('bootstrap', 'N/A')}")
+        
+        # Calcular error de predicción: abs(y_real - y_pred)
+        X_evaluados = np.array(resultado.x_iters).reshape(-1, 1)  # Puntos evaluados
+        y_real = np.array(resultado.func_vals)  # Valores reales obtenidos
+        y_pred = modelo_rf.predict(X_evaluados)  # Predicciones del modelo
+        
+        errores_absolutos = np.abs(y_real - y_pred)
+        mae = np.mean(errores_absolutos)  # Mean Absolute Error
+        mediana_error = np.median(errores_absolutos)  # Mediana del error
+        
+        print(f"\n   📉 Error de predicción del modelo:")
+        print(f"      • MAE (promedio): {mae:.3f}")
+        print(f"      • Mediana del error: {mediana_error:.3f}")
+        print(f"      • Error mínimo: {np.min(errores_absolutos):.3f}")
+        print(f"      • Error máximo: {np.max(errores_absolutos):.3f}")
+        
+        print(f"\n   🏆 Scores evaluados durante la optimización:")
+        print(f"      • Mejor score (mínimo): {np.min(y_real):.6f}")
+        print(f"      • Peor score (máximo): {np.max(y_real):.6f}")
+        print(f"      • Rango: {np.max(y_real) - np.min(y_real):.6f}")
 
 # ========== COMPARACIÓN ==========
 print("\n[5/5] Comparando resultados...")
