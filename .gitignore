@@ -9,3 +9,9 @@ __pycache__/
 dist/
 build/
 .eggs/
+
+# VS Code settings (personal configuration)
+.vscode/
+
+# GitHub workflows (if not needed)
+.github/

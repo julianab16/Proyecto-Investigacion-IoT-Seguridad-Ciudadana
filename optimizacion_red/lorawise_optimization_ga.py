@@ -538,7 +538,6 @@ class LoRaWISEPGAElbow:
         plt.tight_layout()
         plt.show()
     
-# ...existing code...
     def get_optimal_solution(self, plot: bool = True) -> Tuple[np.ndarray, np.ndarray]:
         """
         Obtiene la solución óptima y asignaciones
@@ -699,7 +698,7 @@ if __name__ == "__main__":
         print(f"✓ Datos cargados desde CSV correctamente")
         
     except FileNotFoundError:
-        print("❌ ERROR: No se encontró el archivo CSV")
+        print(" ERROR: No se encontró el archivo CSV")
     
     nodes = X
     
