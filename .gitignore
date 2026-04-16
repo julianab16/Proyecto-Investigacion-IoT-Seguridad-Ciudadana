@@ -6,9 +6,13 @@ __pycache__/
 *.pyc
 *.so
 *.egg-info/
+*.pkl
 dist/
 build/
 .eggs/
+.venv/
+pipeline/
+data_base/
 
 # VS Code settings (personal configuration)
 .vscode/

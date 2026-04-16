@@ -53,11 +53,6 @@ nombre_archivo = "nodos_iot_cali.csv"
 nodos.to_csv(nombre_archivo, index=False)
 print(f"✓ Archivo '{nombre_archivo}' guardado")
 
-# Estadísticas
-print(f"\n📊 ESTADÍSTICAS:")
-print(f"   • Total de nodos: {len(nodos)}")
-print(f"   • X: [{nodos['X_m'].min():,.0f}, {nodos['X_m'].max():,.0f}] m")
-print(f"   • Y: [{nodos['Y_m'].min():,.0f}, {nodos['Y_m'].max():,.0f}] m")
 
 # ========== VISUALIZACIÓN ==========
 print(f"\n[4/4] Generando visualización...")
@@ -80,6 +75,3 @@ plt.savefig('nodos_iot_cali.png', dpi=300, bbox_inches='tight')
 print(f"✓ Gráfica guardada: 'nodos_iot_cali.png'")
 plt.show()
 
-print("\n" + "=" * 70)
-print("✅ PROCESO COMPLETADO")
-print("=" * 70)

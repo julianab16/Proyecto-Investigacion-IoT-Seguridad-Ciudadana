@@ -11,7 +11,8 @@ from pathlib import Path
 import libpysal, warnings, contextlib, builtins, sys, os, logging
 from esda.moran import Moran
 from libpysal.weights import KNN
-    
+from matplotlib.patches import Rectangle
+
 class GeoreferenciaMapa:
     def __init__(self, archivos_especificos, PESOS_DELITOS, mejorcelda, bbox=None):
         """
@@ -77,7 +78,7 @@ class GeoreferenciaMapa:
         
     def mostrar_sistema_pesos(self):
         """Muestra el sistema de pesos por tipo de delito"""
-        print("\n📊 SISTEMA DE PESOS CON ENFOQUE DE GÉNERO")
+        print("\n SISTEMA DE PESOS CON ENFOQUE DE GÉNERO")
         print("─" * 70)
         print(f"{'Tipo de Delito':<25} {'Severidad':<12} {'F.Género':<10} {'Peso Total':<10}")
         print("─" * 70)
@@ -97,17 +98,14 @@ class GeoreferenciaMapa:
             bbox_polygon = box(minx, miny, maxx, maxy)
             bbox_gdf = gpd.GeoDataFrame([1], geometry=[bbox_polygon], crs="EPSG:3116")
             self.cali = gpd.overlay(self.cali, bbox_gdf, how='intersection')
-            print(f"  ✓ Área recortada: {(maxx-minx)/1000:.2f} × {(maxy-miny)/1000:.2f} km")
         
         # Mostrar límites numéricos
         xmin, ymin, xmax, ymax = self.cali.total_bounds
-        print(f"\n   Límites de la ciudad (CRS: EPSG:3116):")
-        print(f"     X mínimo: {xmin:,.2f} m")
-        print(f"     X máximo: {xmax:,.2f} m")
-        print(f"     Y mínimo: {ymin:,.2f} m")
-        print(f"     Y máximo: {ymax:,.2f} m")
-        print(f"     Ancho:    {xmax - xmin:,.2f} m")
-        print(f"     Alto:     {ymax - ymin:,.2f} m")
+        
+        # Calcular e imprimir el área de Cali
+        area_m2 = self.cali.geometry.area.sum()
+        area_km2 = area_m2 / 1e6
+        print(f"\n   Área de Cali: {area_m2:,.2f} m² ({area_km2:,.2f} km²)")
         
     def crear_grilla_hexagonal(self):
         """Crea la grilla hexagonal sobre Cali"""
@@ -195,7 +193,7 @@ class GeoreferenciaMapa:
             
             df['archivo_fuente'] = archivo.split('/')[-1]
             
-            print(f"    {len(df):,} registros procesados - Archivo: {df['categoria'].iloc[0]}")
+            #print(f"    {len(df):,} registros procesados - Archivo: {df['categoria'].iloc[0]}")
             return df
             
         except Exception as e:
@@ -231,7 +229,7 @@ class GeoreferenciaMapa:
         
     def inspeccionar_nivel_severidad(self):
         """Inspecciona valores únicos de nivel_severidad en Lesiones"""
-        print("\n🔍 INSPECCIÓN - Valores únicos de nivel_severidad en Lesiones:")
+        print("\n INSPECCIÓN - Valores únicos de nivel_severidad en Lesiones:")
         lesiones_df = self.df[self.df['categoria'].str.contains('Lesion', case=False, na=False)].copy()
         
         if len(lesiones_df) > 0 and 'nivel_severidad' in lesiones_df.columns:
@@ -311,14 +309,10 @@ class GeoreferenciaMapa:
             
     def mostrar_distribucion_delitos(self):
         """Muestra distribución por categoría de delito"""
-        print(f"\n  📊 Distribución por categoría de delito (dentro de Cali):")
+        print(f"\n   Distribución por categoría de delito (dentro de Cali):")
         print("  " + "─" * 66)
         
         total_dentro = len(self.casos_dentro_cali)
-        
-        if total_dentro == 0:
-            print("    ⚠ No hay registros dentro de los límites de Cali.")
-            return
         
         # Separar feminicidios de homicidios
         casos_mostrar = self.casos_dentro_cali.copy()
@@ -371,7 +365,7 @@ class GeoreferenciaMapa:
         casos_con_celda = casos_con_celda.dropna(subset=["grid_id"])
         
         # Calcular scores
-        print("\n  🧮 Calculando Score_i = Σ(N_ij × P_j)")
+        print("\n   Calculando Score_i = Σ(N_ij × P_j)")
         puntaje_por_celda = casos_con_celda.groupby("grid_id")["peso_delito"].sum().rename("score_raw")
         frecuencia_por_celda = casos_con_celda.groupby("grid_id").size().rename("num_eventos")
         
@@ -381,7 +375,6 @@ class GeoreferenciaMapa:
         self.grid["num_eventos"] = self.grid["num_eventos"].fillna(0).astype(int)
         
         # Normalización
-        print("  📏 Normalizando puntajes...")
         score_min = self.grid["score_raw"].min()
         score_max = self.grid["score_raw"].max()
         
@@ -401,7 +394,7 @@ class GeoreferenciaMapa:
         
     def clasificar_niveles_inseguridad(self):
         """Clasifica celdas por niveles de inseguridad usando percentiles"""
-        print("\n  📊 Clasificando en niveles de inseguridad (percentiles)...")
+        print("\n   Clasificando en niveles de inseguridad (percentiles)...")
         
         indices = self.grid_cali["indice_inseguridad"].values
         clasificacion = np.zeros_like(indices, dtype=int)
@@ -429,7 +422,7 @@ class GeoreferenciaMapa:
         self.grid_cali["nivel_inseguridad"] = clasificacion
         
         # Estadísticas
-        print(f"\n  📈 Distribución de celdas por nivel:")
+        print(f"\n   Distribución de celdas por nivel:")
         for nivel in range(6):
             etiquetas = ['Sin datos', 'Muy Bajo', 'Bajo', 'Medio', 'Alto', 'Muy Alto']
             count = (self.grid_cali["nivel_inseguridad"] == nivel).sum()
@@ -467,7 +460,7 @@ class GeoreferenciaMapa:
         plt.savefig(out_path_simple, dpi=300, bbox_inches='tight', pad_inches=0)
         print(f"  ✓ Mapa simple guardado: {out_path_simple.name}")
         ax.axis('on')  # Volver a mostrar ejes para el mapa completo
-        
+
         # Límites administrativos
         try:
             comunas = ox.features_from_place("Santiago de Cali, Colombia", 
@@ -482,10 +475,10 @@ class GeoreferenciaMapa:
             print("  ⚠ No se pudieron cargar límites administrativos")
         
         # Título
-        plt.title("Security Heatmap with Gender Focus\nSantiago de Cali", 
-                 fontsize=16, pad=20, weight='bold')
-        plt.xlabel("X Coordinate (meters)", fontsize=11)
-        plt.ylabel("Y Coordinate (meters)", fontsize=11)
+
+        plt.xlabel("X Coordinate (meters)", fontsize=14)
+        plt.ylabel("Y Coordinate (meters)", fontsize=14)
+        ax.tick_params(axis='both', labelsize=14)
 
         # Barra de color
         sm = plt.cm.ScalarMappable(cmap=cmap, norm=plt.Normalize(vmin=0, vmax=5))
@@ -494,6 +487,8 @@ class GeoreferenciaMapa:
         cbar.set_ticks([0, 1, 2, 3, 4, 5])
         cbar.set_ticklabels(['No data', 'Very Low\n(0-20%)', 'Low\n(20-40%)',
                             'Medium\n(40-60%)', 'High\n(60-80%)', 'Very High\n(80-100%)'])
+        cbar.set_label("Level of Insecurity", fontsize=14)
+        cbar.ax.tick_params(labelsize=14)
         
         # Panel de estadísticas
         dentro = self.gdf_casos[self.gdf_casos.within(self.cali.geometry.iloc[0])]
@@ -510,7 +505,7 @@ class GeoreferenciaMapa:
             f"Cells without data: {total_celdas - celdas_activas:,}"
         )
         
-        plt.text(0.64, 0.16, stats_text, transform=ax.transAxes, fontsize=9,
+        plt.text(0.60, 0.16, stats_text, transform=ax.transAxes, fontsize=12,
                 verticalalignment='top', family='monospace',
                 bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.9, pad=0.8))
         
@@ -522,7 +517,7 @@ class GeoreferenciaMapa:
         plt.savefig(out_path_completo, dpi=300, bbox_inches='tight')
         print(f"  ✓ Mapa completo guardado: {out_path_completo.name}")
         
-        plt.show()
+        #plt.show()
     
     def calcular_gini_espacial(self):
         """
@@ -534,9 +529,6 @@ class GeoreferenciaMapa:
         # Serie de eventos por celda (incluye ceros)
         y = self.grid_cali.get('num_eventos', pd.Series(dtype=int)).fillna(0).astype(float).values
         n = len(y)
-        if n == 0:
-            print("  ✗ No hay celdas para analizar.")
-            return None
     
         # Fórmula estándar del Gini (orden ascendente). Si suma_total=0 => Gini=0 (uniforme)
         y_sorted = np.sort(y)
@@ -563,7 +555,7 @@ class GeoreferenciaMapa:
         celdas_con_eventos = int(np.sum(y > 0))
     
         resultados = {
-            'gini_espacial': round(gini, 4),
+            'gini_espacial': gini,
             'interpretacion': (
                 "Baja desigualdad - Distribución relativamente uniforme" if gini < 0.3 else
                 "Desigualdad moderada - Cierta concentración espacial" if gini < 0.5 else
@@ -585,18 +577,15 @@ class GeoreferenciaMapa:
     
         # Output
         print("\n" + "="*70)
-        print("📊 ÍNDICE DE GINI ESPACIAL - DISTRIBUCIÓN DE DELITOS")
-        print("="*70)
-        print(f"  Índice de Gini: {gini:.4f}")
+        print(" ÍNDICE DE GINI ESPACIAL - DISTRIBUCIÓN DE DELITOS")
+        print(f"  Índice de Gini: {gini:.6f}")
         print(f"  Interpretación: {resultados['interpretacion']}")
-        print(f"\n  📍 Distribución:")
-        print(f"     • Total de eventos: {total_eventos:,}")
-        print(f"     • Total de celdas: {total_celdas:,}")
+        print(f"\n   Distribución:")
         print(f"     • Celdas con eventos: {celdas_con_eventos:,} ({resultados['porcentaje_celdas_activas']:.1f}%)")
         print(f"     • Celdas sin eventos: {total_celdas - celdas_con_eventos:,}")
-        print(f"\n  📈 Concentración:")
+        print(f"\n  Concentración:")
         print(f"     • Top 20% de celdas contiene: {resultados['concentracion_top20']:.1f}% de los eventos")
-        print(f"\n  📊 Estadísticas:")
+        print(f"\n   Estadísticas:")
         print(f"     • Media: {media:.2f} | Mediana: {mediana:.2f} | STD: {desviacion_std:.2f} | CV: {cv:.1f}%")
         print("="*70)
     
@@ -670,8 +659,7 @@ class GeoreferenciaMapa:
         }
     
         print("\n" + "="*70)
-        print("📊 ÍNDICE DE MORAN I (num_eventos)")
-        print("="*70)
+        print(" ÍNDICE DE MORAN I (num_eventos)")
         print(f"  Moran I: {moran.I:.4f} {sig_nivel} | E[I]: {moran.EI:.4f}")
         print(f"  Z-score: {z_score:.4f} | p_norm: {moran.p_norm:.6f} | p_perm: {moran.p_sim:.6f}")
         print(f"  Interpretación: {interpretacion} ({patron})")
@@ -803,8 +791,7 @@ class GeoreferenciaMapa:
         }
     
         print("\n" + "="*70)
-        print("🔥 ANÁLISIS GETIS-ORD Gi* (num_eventos)")
-        print("="*70)
+        print(" ANÁLISIS GETIS-ORD Gi* (num_eventos)")
         print(f"  • Total de celdas: {total_celdas:,}")
         print(f"  • Hotspots: {total_hotspots} ({pct_hotspots:.1f}%) | Coldspots: {total_coldspots} ({pct_coldspots:.1f}%)")
         print(f"  • No significativo: {no_significativo} ({pct_no_sig:.1f}%)")
@@ -947,8 +934,7 @@ class GeoreferenciaMapa:
 
         # Output
         print("\n" + "="*70)
-        print("🔥 HCI/BCI con num_eventos (conteo de delitos)")
-        print("="*70)
+        print(" HCI/BCI con num_eventos (conteo de delitos)")
         print(f"  • Media eventos/celda: {n_mean:.2f} | STD: {n_std:.2f} | Mediana: {n_median:.2f}")
         print(f"  • Hot clusters: {hci_total} ({pct_hci:.1f}%) | HCI max: {np.max(hci):.4f}")
         print(f"  • Background clusters: {bci_total} ({pct_bci:.1f}%) | BCI max: {np.max(bci):.4f}")
@@ -1089,8 +1075,7 @@ class GeoreferenciaMapa:
 
         # Mostrar
         print("\n" + "="*70)
-        print("📊 IDR DELITOS (Ponderado por categoría) - CONTRASTE LOCAL")
-        print("="*70)
+        print(" IDR DELITOS (Ponderado por categoría) - CONTRASTE LOCAL")
         print(f"  Categorías: {', '.join(categorias)}")
         print(f"  STD global (ponderado): {std_global:.4f}")
         print(f"\n  Clasificación (|IDR_total| en std):")
@@ -1192,8 +1177,7 @@ class GeoreferenciaMapa:
         }
     
         print("\n" + "="*70)
-        print("📊 Entropía de Shannon por Delitos (vecindario)")
-        print("="*70)
+        print(" Entropía de Shannon por Delitos (vecindario)")
         print(f"  Categorías (K): {K} → {', '.join(categorias)}")
         print(f"  Entropía media: {resultados['entropia']['media']:.4f}")
         print(f"  Homogeneidad media: {resultados['homogeneidad']['media']:.4f}")
@@ -1324,8 +1308,7 @@ class GeoreferenciaMapa:
         }
 
         print("\n" + "="*70)
-        print(f"📈 GRADIENTE ESPACIAL ({variable})")
-        print("="*70)
+        print(f" GRADIENTE ESPACIAL ({variable})")
         print(f"  • Transiciones: Suaves={suaves}, Moderadas={moderadas}, Abruptas={abruptas}")
         print(f"  • RMS diferencias → Media: {rms_mean:.4f} | STD: {rms_std:.4f}")
         print("="*70)
@@ -1359,28 +1342,17 @@ class GeoreferenciaMapa:
         print("\n" + "="*70)
         print("✓ PROCESO COMPLETADO")
         print("="*70)
-        """
-        return {
-            #'gini': gini_results, 
-            #'moran': moran_results
-            #'gi_star': gi_star_results
-            #'hci_bci': hci_bci_results,
-            #'idr': idr_results
-            #'shannon_vecindario': shannon_results
-            'gradiente': gradiente
-        }
-        """
 
 
 if __name__ == "__main__":
     import json
     
     # Cargar configuración
-    resultados_dir = Path(__file__).resolve().parent / "resultados_optimizacion"
-    
-    with open(resultados_dir / "mejorcelda.json") as f:
+    resultados_dir = Path(__file__).resolve().parent / "optimizacion_celda"
+
+    with open(resultados_dir / "resumen_tres_metodos.json") as f:
         config = json.load(f)
-        mejorcelda = config['mejorcelda']
+        mejorcelda = config['recomendacion']
         mejor_metodo_nombre = config['mejor_metodo']
     
 
@@ -1415,3 +1387,30 @@ if __name__ == "__main__":
     # Crear instancia y ejecutar
     mapa = GeoreferenciaMapa(archivos_especificos, PESOS_DELITOS, mejorcelda, bbox=BBOX)
     mapa.ejecutar_pipeline_completo()
+
+
+    print(f"\n{'='*80}")
+    print(f"EXPORT GEOREFERENCIA GRID TO GEOJSON")
+    print(f"{'='*80}")
+
+    # Exportar grid_cali a GeoJSON
+    output_path = Path("images") / "grid_cali.geojson"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    print(f"\n{'='*80}")
+    print(f"EXPORTING HEXAGONAL GRID TO GEOJSON")
+    print(f"{'='*80}")
+    print(f"Saving grid_cali ({len(mapa.grid_cali)} cells) to: {output_path}")
+
+    # Exportar a GeoJSON usando método manual (evitar problemas con pyogrio)
+    import json
+    geojson_data = mapa.grid_cali.__geo_interface__
+    with open(output_path, 'w', encoding='utf-8') as f:
+        json.dump(geojson_data, f, ensure_ascii=False, indent=2)
+
+    print(f"✓ Success! Grid exported to: {output_path}")
+    print(f"\nGrid properties:")
+    print(f"  - Total cells: {len(mapa.grid_cali)}")
+    print(f"  - Insecurity index range: 0-100")
+    print(f"  - CRS: {mapa.grid_cali.crs}")
+    print(f"{'='*80}\n")

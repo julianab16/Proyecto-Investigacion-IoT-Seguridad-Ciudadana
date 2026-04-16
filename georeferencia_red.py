@@ -1,12 +1,14 @@
 # ========== IMPORTS ==========
 import sys
 from pathlib import Path
+from math import log
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 import numpy as np
 import pandas as pd
 from shapely.geometry import Point
 from matplotlib.lines import Line2D
+from matplotlib.patches import Rectangle
 
 # Importar clase base de georeferenciación
 sys.path.append(str(Path(__file__).parent))
@@ -21,6 +23,7 @@ from ga import LoRaWISEPGAElbow
 from metricas import LoRaWANMetricsEvaluator
 
 class GeoreferenciaRedLoRaWAN(GeoreferenciaMapa):
+
     """
     Extensión de GeoreferenciaMapa que integra optimización de red LoRaWAN
     
@@ -42,41 +45,35 @@ class GeoreferenciaRedLoRaWAN(GeoreferenciaMapa):
         
         # Atributos adicionales para red LoRaWAN
         self.nodos_iot = None
+        self.nodos_iot_riesgo = None
+        self.nodos_iot_uniforme = None
+        self.nodos_iot_aleatorio = None
         self.gateways = None
+        self.gateways_ga = None
         self.assignments = None
         self.optimizer = None
         
-    def generar_nodos_iot_desde_delitos(self, estrategia='ponderada', min_nivel=3, num_nodos_exacto=None):
+    def generar_nodos_iot_desde_delitos(self, num_nodos_exacto=None):
+        
         """
         Genera posiciones de nodos IoT basándose en datos de delitos
         
-        Estrategias:
-        - 'ponderada': coloca más nodos en zonas de alta inseguridad
-        - 'uniforme': distribución uniforme por celda
-        - 'critica': solo en zonas críticas (nivel >= min_nivel)
-        - 'exacto': número exacto de nodos distribuidos proporcionalmente
-        
         Args:
             estrategia: método de distribución de nodos
-            min_nivel: nivel mínimo de inseguridad para colocar nodos (1-5)
+            min_nivel: nivel mínimo de inseguridad para colocar nodos (1-6)
             num_nodos_exacto: número exacto de nodos a generar (None = automático)
             
         Returns:
             nodos_coords: array (N, 2) con coordenadas de nodos IoT
         """
-        print("\n[🔧] Generando nodos IoT desde datos de delitos...")
+        print("\n Generando nodos IoT desde datos de delitos...")
         
         nodos_coords = []
         
         if num_nodos_exacto is not None:
-            # Modo EXACTO: distribuir N nodos proporcionalmente al índice de inseguridad
-            print(f"  • Modo: Número exacto de nodos = {num_nodos_exacto}")
             
             # Filtrar celdas con datos
             celdas_activas = self.grid_cali[self.grid_cali['nivel_inseguridad'] > 0].copy()
-            
-            if len(celdas_activas) == 0:
-                raise ValueError("No hay celdas con datos de inseguridad")
             
             # Calcular peso de cada celda (proporcional al índice de inseguridad)
             celdas_activas['peso'] = celdas_activas['indice_inseguridad']
@@ -131,67 +128,14 @@ class GeoreferenciaRedLoRaWAN(GeoreferenciaMapa):
                         # Si no se puede colocar dentro, usar centroide
                         centroid = poly.centroid
                         nodos_coords.append([centroid.x, centroid.y])
+        else:
+            print(f"  cero nodos IoT generados")
         
-        elif estrategia == 'ponderada':
-            # Colocar nodos proporcionales al índice de inseguridad
-            for idx, row in self.grid_cali.iterrows():
-                nivel = row['nivel_inseguridad']
-                if nivel == 0:
-                    continue
-                
-                # Número de nodos: más en zonas críticas
-                if nivel == 5:  # Muy alto
-                    n_nodos = 5
-                elif nivel == 4:  # Alto
-                    n_nodos = 3
-                elif nivel == 3:  # Medio
-                    n_nodos = 2
-                else:  # Bajo, Muy bajo
-                    n_nodos = 1
-                
-                poly = row['geometry']
-                minx, miny, maxx, maxy = poly.bounds
-                
-                for _ in range(n_nodos):
-                    while True:
-                        x = np.random.uniform(minx, maxx)
-                        y = np.random.uniform(miny, maxy)
-                        punto = Point(x, y)
-                        if poly.contains(punto):
-                            nodos_coords.append([x, y])
-                            break
-        
-        elif estrategia == 'uniforme':
-            for idx, row in self.grid_cali.iterrows():
-                if row['nivel_inseguridad'] > 0:
-                    centroid = row['geometry'].centroid
-                    nodos_coords.append([centroid.x, centroid.y])
-        
-        elif estrategia == 'critica':
-            for idx, row in self.grid_cali.iterrows():
-                if row['nivel_inseguridad'] >= min_nivel:
-                    poly = row['geometry']
-                    minx, miny, maxx, maxy = poly.bounds
-                    
-                    n_nodos = 3 if row['nivel_inseguridad'] == 5 else 2
-                    
-                    for _ in range(n_nodos):
-                        while True:
-                            x = np.random.uniform(minx, maxx)
-                            y = np.random.uniform(miny, maxy)
-                            punto = Point(x, y)
-                            if poly.contains(punto):
-                                nodos_coords.append([x, y])
-                                break
-        
+     
         self.nodos_iot = np.array(nodos_coords)
-        
         print(f"  ✓ {len(self.nodos_iot)} nodos IoT generados")
-        print(f"  • Estrategia: {estrategia if num_nodos_exacto is None else 'exacto'}")
-        if estrategia == 'critica':
-            print(f"  • Nivel mínimo: {min_nivel}")
-        
         return self.nodos_iot
+
     
     def optimizar_gateways_kmeans(self):
         """
@@ -205,10 +149,7 @@ class GeoreferenciaRedLoRaWAN(GeoreferenciaMapa):
             gateways: array (K, 2) con posiciones de gateways
             assignments: array (N,) con asignación nodo->gateway
         """
-        print("\n[⚙️] Optimizando posicionamiento de gateways LoRaWAN...")
-        
-        if self.nodos_iot is None:
-            raise ValueError("Ejecuta generar_nodos_iot_desde_delitos() primero")
+        print("\n Optimizando posicionamiento de gateways LoRaWAN...")
         
         # Calcular dimensiones del área de cobertura
         x_coords = self.nodos_iot[:, 0]
@@ -252,9 +193,7 @@ class GeoreferenciaRedLoRaWAN(GeoreferenciaMapa):
         return self.gateways, self.assignments
     
     def optimizar_gateways_ga(self):
-        if self.nodos_iot is None:
-            raise ValueError("Ejecuta generar_nodos_iot_desde_delitos() primero")
-        
+
         # Calcular dimensiones del área de cobertura
         x_coords = self.nodos_iot[:, 0]
         y_coords = self.nodos_iot[:, 1]
@@ -297,77 +236,34 @@ class GeoreferenciaRedLoRaWAN(GeoreferenciaMapa):
         # Guardar referencia al optimizador
         self.optimizer = optimizer
         
-        print(f"\n  ✓ {len(self.gateways)} gateways optimizados con Algoritmo Genético")
         print(f"  • K óptimo determinado: {optimal_k}")
 
-
-
-        return self.gateways, self.assignments
-    
-    def guardar_gateways_ga_csv(self, nombre_archivo='gateways_ga.csv'):
-        """
-        Guarda las posiciones de los gateways del método GA en un archivo CSV
-        
-        Args:
-            nombre_archivo: nombre del archivo CSV a generar
-        """
-        if not hasattr(self, 'gateways_ga') or self.gateways_ga is None:
-            raise ValueError("Ejecuta optimizar_gateways_ga() primero")
-        
         # Crear DataFrame con las posiciones en metros
-        df_gateways = pd.DataFrame(
+        df = pd.DataFrame(
             self.gateways_ga,
             columns=['x', 'y']
         )
         
-        # Agregar ID de gateway
-        df_gateways.insert(0, 'id', range(1, len(self.gateways_ga) + 1))
-        
-        # Guardar en la carpeta raíz del proyecto
-        output_path = Path(__file__).resolve().parent / nombre_archivo
-        df_gateways.to_csv(output_path, index=False)
-        
-        print(f"\n  ✓ Posiciones de gateways GA guardadas en: {output_path}")
-        print(f"  • Total de gateways: {len(self.gateways_ga)}")
-        print(f"  • Coordenadas guardadas en metros (sistema proyectado)")
-        
-        return output_path
-    
-    def guardar_nodos_iot_csv(self, nombre_archivo='nodos_iot.csv'):
-        """
-        Guarda las posiciones de los nodos IoT en un archivo CSV
-        
-        Args:
-            nombre_archivo: nombre del archivo CSV a generar
-        """
-        if self.nodos_iot is None:
-            raise ValueError("Ejecuta generar_nodos_iot_desde_delitos() primero")
-        
-        # Crear DataFrame con las posiciones en metros
-        df_nodos = pd.DataFrame(
-            self.nodos_iot,
-            columns=['x', 'y']
-        )
-        
         # Agregar ID de nodo
-        df_nodos.insert(0, 'id', range(1, len(self.nodos_iot) + 1))
-        
-        # Guardar en la carpeta raíz del proyecto
-        output_path = Path(__file__).resolve().parent / nombre_archivo
-        df_nodos.to_csv(output_path, index=False)
+        df.insert(0, 'id', range(1, len(self.gateways_ga) + 1))
+
+        output_path = Path(__file__).resolve().parent / "data_base"
+        output_path.mkdir(parents=True, exist_ok=True)
+        out_path_simple = output_path / "gateways.csv"
+
+        df.to_csv(out_path_simple, index=False)
         
         print(f"\n  ✓ Posiciones de nodos IoT guardadas en: {output_path}")
-        print(f"  • Total de nodos: {len(self.nodos_iot)}")
-        print(f"  • Coordenadas guardadas en metros (sistema proyectado)")
-        
-        return output_path
+
+        return self.gateways, self.assignments
+    
  
-    def comparar_metodos(self, export_csv=True):
+    def comparar_metodos(self, export_csv=False):
             """Usa metricas.LoRaWANMetricsEvaluator para evaluar KMeans vs GA y decidir cuál es mejor."""
             if getattr(self, 'gateways_kmeans', None) is None or getattr(self, 'gateways_ga', None) is None:
                 raise ValueError("Ejecuta optimizar_gateways_kmeans() y optimizar_gateways_ga() antes de comparar.")
             
-            print("\n[🔎] Evaluando métricas: K-Means vs GA")
+            print("\n Evaluando métricas: K-Means vs GA")
             
             eval_km = LoRaWANMetricsEvaluator(nodes=self.nodos_iot,
                                               gateways=self.gateways_kmeans,
@@ -415,10 +311,10 @@ class GeoreferenciaRedLoRaWAN(GeoreferenciaMapa):
                 self.gateways = self.gateways_kmeans
                 self.assignments = self.assignments_kmeans
             
-            print(f"\n➡️ Método seleccionado para visualización final: {mejor} (PDR: KMeans={pdr_km:.2f}%, GA={pdr_ga:.2f}%)")
+            print(f"\n Método seleccionado para visualización final: {mejor} (PDR: KMeans={pdr_km:.2f}%, GA={pdr_ga:.2f}%)")
     
             print("\n" + "="*70)
-            print("📍 COMPARACIÓN DE POSICIONES DE GATEWAYS")
+            print(" COMPARACIÓN DE POSICIONES DE GATEWAYS")
             print("="*70)
             
             # Mostrar comparación gráfica lado a lado
@@ -437,10 +333,7 @@ class GeoreferenciaRedLoRaWAN(GeoreferenciaMapa):
          - los gateways obtenidos por K-Means (triángulos magenta)
          - los gateways obtenidos por GA (círculos negros)
         """
-        print("\n[📊] Visualización comparativa de gateways (K-Means vs GA)...")
-
-        if getattr(self, 'cali', None) is None or getattr(self, 'grid_cali', None) is None:
-            raise ValueError("Ejecuta la georreferenciación antes (ejecutar_pipeline_georeferenciacion).")
+        print("\n Visualización comparativa de gateways (K-Means vs GA)...")
 
         fig, ax = plt.subplots(figsize=(14, 12))
 
@@ -514,7 +407,7 @@ class GeoreferenciaRedLoRaWAN(GeoreferenciaMapa):
             plt.savefig(outname, dpi=300, bbox_inches='tight', facecolor='white')
             print(f"✓ Comparativa guardada: {outname}")
 
-        plt.show()
+        #plt.show()
 
     def visualizar_red_completa(self, mostrar_conexiones=True, guardar=True, name=None):
         """
@@ -524,7 +417,7 @@ class GeoreferenciaRedLoRaWAN(GeoreferenciaMapa):
             mostrar_conexiones: si True, dibuja líneas nodo->gateway
             guardar: si True, guarda imagen PNG
         """
-        print("\n[📊] Generando visualización completa de red LoRaWAN...")
+        print("\n Generando visualización completa de red LoRaWAN...")
         
         fig, ax = plt.subplots(figsize=(16, 12))
         
@@ -596,8 +489,1222 @@ class GeoreferenciaRedLoRaWAN(GeoreferenciaMapa):
             plt.savefig(outname, dpi=300, bbox_inches='tight')
             print(f"✓ Mapa guardado: {outname}")
         
-        plt.show()
+        #plt.show()
         
+
+    def gtw_distance(self, factor_densidad=1.0, max_intentos=100,
+                     graficar=True, guardar=True, nombre_mapa='qos_logdistance_riesgo.png'):
+
+        print("\n Recalculando nodos IoT desde grid_cali con riesgo...")
+        nodos_coords = []
+
+        celdas_activas = self.grid_cali
+        for _, row in celdas_activas.iterrows():
+            indice = float(row.get('indice_inseguridad', 0.0))
+
+            # Sin límite fijo de nodos por celda
+            n_nodos = max(1, int(np.ceil(indice * factor_densidad)))
+
+            poly = row['geometry']
+            minx, miny, maxx, maxy = poly.bounds
+
+            for _ in range(n_nodos):
+                intentos = 0
+                while intentos < max_intentos:
+                    x = np.random.uniform(minx, maxx)
+                    y = np.random.uniform(miny, maxy)
+                    punto = Point(x, y)
+                    if poly.contains(punto):
+                        nodos_coords.append([x, y])
+                        break
+                    intentos += 1
+
+                if intentos >= max_intentos:
+                    centroide = poly.centroid
+                    nodos_coords.append([centroide.x, centroide.y])
+
+        self.nodos_iot_riesgo = np.array(nodos_coords)
+        print(f"  • Nodos recalculados: {len(self.nodos_iot_riesgo)}")
+
+        # Crear DataFrame con las posiciones en metros
+        df_nodos = pd.DataFrame(
+            self.nodos_iot_riesgo,
+            columns=['x', 'y']
+        )
+        
+        # Agregar ID de nodo
+        df_nodos.insert(0, 'id', range(1, len(self.nodos_iot_riesgo) + 1))
+
+        output_path = Path(__file__).resolve().parent / "data_base"
+        output_path.mkdir(parents=True, exist_ok=True)
+        out_path_simple = output_path / "nodos.csv"
+
+        df_nodos.to_csv(out_path_simple, index=False)
+        
+        print(f"\n  ✓ Posiciones de nodos IoT guardadas en: {output_path}")
+        
+        nodos = np.asarray(self.nodos_iot_riesgo)
+        
+        gateways = np.asarray(self.gateways_ga)
+
+        # Parámetros de propagación (urbano)
+        frequency_mhz = 915.0
+        path_loss_exponent = 2.7
+        d0 = 1.0  # m
+        tx_power_dbm = 14.0
+
+        # Pérdida en distancia de referencia (espacio libre)
+        pl_d0 = 20 * np.log10(4 * np.pi * d0 * frequency_mhz * 1e6 / 3e8)
+
+        # Distancias de cada nodo a cada gateway -> matriz (N, K)
+        delta = nodos[:, np.newaxis, :] - gateways[np.newaxis, :, :]
+        dist_matrix = np.linalg.norm(delta, axis=2)
+        dist_clip = np.maximum(dist_matrix, d0)
+
+        # Path loss y RSSI para cada pareja nodo-gateway
+        path_loss_matrix = pl_d0 + 10 * path_loss_exponent * np.log10(dist_clip / d0)
+        rssi_matrix = tx_power_dbm - path_loss_matrix
+
+        # Elegir mejor gateway por mayor RSSI (equivale a menor path loss)
+        assignments_modelo = np.argmax(rssi_matrix, axis=1)
+
+        # Extraer métricas del mejor enlace por nodo
+        idx = np.arange(len(nodos))
+        dist = dist_matrix[idx, assignments_modelo]
+        path_loss_db = path_loss_matrix[idx, assignments_modelo]
+        rssi_dbm = rssi_matrix[idx, assignments_modelo]
+
+        # Clasificación de calidad por RSSI
+        calidad = np.where(
+            rssi_dbm > -80, 'Excelent',
+            np.where(rssi_dbm > -100, 'Good',
+                     'Regular')
+        )
+
+
+        # Guardar asignación basada en modelo
+        self.assignments_logdistance_ga = assignments_modelo
+
+        colores_nivel = {0: "Sin datos", 1:  "Muy Bajo", 2: "Bajo", 3: "Medio", 4: "Alto", 5: "Muy Alto"}
+    
+        clasificacion = []
+
+        celdas_con_sensores = self.grid_cali
+        for i, nodo in enumerate(nodos):
+            punto = Point(nodo[0], nodo[1])
+            clasi = "Sin datos"
+            for _, celda in celdas_con_sensores.iterrows():
+                if celda['geometry'].contains(punto):
+                    nivel = int(celda['nivel_inseguridad'])
+                    clasi = colores_nivel[nivel]
+                    break
+            clasificacion.append(clasi)
+
+        # DataFrame por nodo
+        df = pd.DataFrame({
+            'id_nodo': np.arange(1, len(nodos) + 1),
+            'clasificacion': clasificacion,
+            'id_gateway_logdistance': assignments_modelo + 1,
+            'distancia_m': dist,
+            'path_loss_db': path_loss_db,
+            'rssi_dbm': rssi_dbm,
+            'calidad': calidad
+        })
+        
+        output_path = Path(__file__).resolve().parent / "data_base"
+        output_path.mkdir(parents=True, exist_ok=True)
+        out_path_simple = output_path / "informacion_nodos_riesgo.csv"
+
+        df.to_csv(out_path_simple, index=False)
+        
+
+        # Resumen
+        conteo_calidad = df['calidad'].value_counts().to_dict()
+        resumen = {
+            'n_nodos': int(len(df)),
+            'n_gateways_ga': int(len(gateways)),
+            'distancia_m': {
+                'min': float(df['distancia_m'].min()),
+                'mean': float(df['distancia_m'].mean()),
+                'max': float(df['distancia_m'].max())
+            },
+            'path_loss_db': {
+                'min': float(df['path_loss_db'].min()),
+                'mean': float(df['path_loss_db'].mean()),
+                'max': float(df['path_loss_db'].max())
+            },
+            'rssi_dbm': {
+                'min': float(df['rssi_dbm'].min()),
+                'mean': float(df['rssi_dbm'].mean()),
+                'max': float(df['rssi_dbm'].max())
+            },
+            'calidad_nodos': {
+                'Excelente': int(conteo_calidad.get('Excelente', 0)),
+                'Buena': int(conteo_calidad.get('Buena', 0)),
+                'Regular': int(conteo_calidad.get('Regular', 0))
+            }
+        }
+
+        print(f"  • Nodos dentro del rango: {resumen['calidad_nodos']['Buena']+resumen['calidad_nodos']['Excelente']}")
+
+        if graficar:
+            fig, ax = plt.subplots(figsize=(16, 12))
+
+            # Mapa base si está disponible
+            self.cali.plot(ax=ax, color='white', edgecolor='black', linewidth=2.0, zorder=1)
+
+            if getattr(self, 'grid_cali', None) is not None:
+                try:
+                    self.grid_cali.plot(ax=ax, color="white", edgecolor="black", linewidth=0.25, zorder=2)
+                                        
+                    # Contar sensores por nivel usando las asignaciones y celdas
+                    # Solo buscar en celdas con nivel > 0 (donde se generan nodos)
+                    sensores_por_nivel = {0: 0, 1: 0, 2: 0, 3: 0, 4: 0, 5: 0}
+                    
+                    celdas_con_sensores = self.grid_cali
+                    for i, nodo in enumerate(nodos):
+                        punto = Point(nodo[0], nodo[1])
+                        for _, celda in celdas_con_sensores.iterrows():
+                            if celda['geometry'].contains(punto):
+                                nivel = int(celda['nivel_inseguridad'])
+                                sensores_por_nivel[nivel] += 1
+                                break
+                except Exception:
+                    pass
+            
+            print("\n   Celdas y sensores por nivel de inseguridad:")
+            print("  " + "-"*65)
+            print(f"  {'Nivel':<8} {'Clasificacion':<12} {'Celdas':<10} {'Sensores':<10} {'Promedio':<10}")
+            print("  " + "-"*65)
+            total_celdas = 0
+            total_sensores = 0
+            
+            # Lista para guardar los datos de cada nivel
+            datos_niveles = []
+            
+            for nivel in range(6):
+                count_celdas = len(self.grid_cali[self.grid_cali['nivel_inseguridad'] == nivel])
+                count_sensores = sensores_por_nivel.get(nivel, 0)
+                total_celdas += count_celdas
+                total_sensores += count_sensores
+                promedio = (count_sensores / count_celdas) if count_celdas > 0 else 0
+                print(f"  {nivel:<8} {colores_nivel[nivel]:<12} {count_celdas:<10} {count_sensores:<10} {promedio:<10.2f}")
+                datos_niveles.append({
+                    'Nivel': nivel,
+                    'Clasificacion': colores_nivel[nivel],
+                    'Celdas': count_celdas,
+                    'Sensores': count_sensores
+                })
+            
+            print("  " + "-"*65)
+            
+            df_nodos_riesgo = pd.DataFrame(datos_niveles)
+            
+            output_path = Path(__file__).resolve().parent / "data_base"
+            output_path.mkdir(parents=True, exist_ok=True)
+            out_path_simple = output_path / "celdas_nodos_riesgo.csv"
+            
+            df_nodos_riesgo.to_csv(out_path_simple, index=False)
+            
+            sensores_por_celda = []
+            for _, celda in self.grid_cali.iterrows():
+                poly = celda['geometry']
+                count = sum(poly.contains(Point(x, y)) for x, y in self.nodos_iot_riesgo)
+                sensores_por_celda.append(count)
+            
+            if len(sensores_por_celda) > 0:
+                y = np.array(sensores_por_celda, dtype=float)
+                n = len(y)
+                y_sorted = np.sort(y)
+                suma_total = float(np.sum(y_sorted))
+                if suma_total == 0:
+                    gini = 0.0
+                else:
+                    i = np.arange(1, n + 1, dtype=float)
+                    gini = (2.0 * np.sum(i * y_sorted)) / (n * suma_total) - (n + 1.0) / n
+                    gini = max(0.0, min(1.0, gini))
+            else:
+                gini = 0.0
+            
+            print(f"Gini total de sensores en el mapa: {gini:.4f}")
+            print(f"  {'TOTAL':<8} {'':<12} {total_celdas:<10} {total_sensores:<10} Gini={gini:<10}")
+
+            color_map = {
+                'Excellent': "green",
+                'Good': "yellow",
+                'Regular': "#f05209",
+                'Excelente': "green",
+                'Buena': "yellow",
+                'Excelent': "green"
+            }
+  
+            df = pd.DataFrame(
+            self.nodos_iot_riesgo,
+            columns=['x', 'y']
+            )
+        
+            # Agregar ID de nodo
+            df.insert(0, 'id', range(1, len(self.nodos_iot_riesgo) + 1))
+
+            # Filtrar nodos dentro del cuadrado
+            x_ini = 727000
+            y_ini = 867300
+            ancho = 4000
+            alto = 4000
+            rect = Rectangle((x_ini, y_ini), ancho, alto, linewidth=5, edgecolor='deepskyblue', facecolor='aqua', alpha=0.8, zorder=4)
+            ax.add_patch(rect)
+            x_fin = x_ini + ancho
+            y_fin = y_ini + alto
+            nodos_cuadrado = df[(df['x'] >= x_ini) & (df['x'] <= x_fin) & (df['y'] >= y_ini) & (df['y'] <= y_fin)]
+            if len(nodos_cuadrado) == 1000:
+                            print(f"✓ Mil nodos dentro")
+            else:
+                print(f"No hay mil nodos: {len(nodos_cuadrado)}")
+
+            output_path = Path(__file__).resolve().parent / "data_base"
+            output_path.mkdir(parents=True, exist_ok=True)
+            out_path_cuadrado = output_path / "nodos_cuadrado.csv"
+            nodos_cuadrado.to_csv(out_path_cuadrado, index=False)
+
+
+            calidad_map = {
+                'Excelente': 'Excellent',
+                'Buena': 'Good',
+                'Excelent': 'Excellent'
+            }
+            calidad_norm = [calidad_map.get(c, c) for c in calidad]
+            colores_nodos = [color_map[c] for c in calidad_norm]
+
+            ax.scatter(nodos[:, 0], nodos[:, 1], c=colores_nodos, s=22, alpha=0.75,
+                       edgecolors='none', zorder=4, label=f'Nodos ({len(nodos)})')
+
+            ax.scatter(gateways[:, 0], gateways[:, 1], c='black', marker='^', s=220,
+                       edgecolors='white', linewidth=1.2, zorder=3,
+                       label=f'Gateways GA ({len(gateways)})')
+
+            # Conexiones suaves según asignación del modelo
+            gw_sel = gateways[assignments_modelo]
+            for i in range(len(nodos)):
+                ax.plot([nodos[i, 0], gw_sel[i, 0]], [nodos[i, 1], gw_sel[i, 1]],
+                        color='gray', alpha=0.05, linewidth=0.4, zorder=3)
+
+            handles = [
+                Line2D([0], [0], marker='o', color='w', markerfacecolor=color_map['Excelente'], markersize=8, label=f"Excelente ({resumen['calidad_nodos']['Excelente']})"),
+                Line2D([0], [0], marker='o', color='w', markerfacecolor=color_map['Buena'], markersize=8, label=f"Buena ({resumen['calidad_nodos']['Buena']})"),
+                Line2D([0], [0], marker='o', color='w', markerfacecolor=color_map['Regular'], markersize=8, label=f"Regular ({resumen['calidad_nodos']['Regular']})"),
+                Line2D([0], [0], marker='^', color='w', markerfacecolor='black', markersize=10, label=f"Gateways GA ({len(gateways)})")
+            ]
+            ax.legend(handles=handles, loc='upper right', fontsize=14, frameon=True, edgecolor='black')
+
+            ax.set_xlabel('X Coordinate (meters)', fontsize=14)
+            ax.set_ylabel('Y Coordinate (meters)', fontsize=14)
+            ax.set_title('Number of Nodes by Log-Distance using Risk Model', fontsize=14, weight='bold')
+            ax.tick_params(axis='both', labelsize=14)
+            ax.grid(True, alpha=0.25, linestyle='--')
+            plt.tight_layout()
+
+            if guardar:
+                images_dir = Path(__file__).resolve().parent / 'images'
+                images_dir.mkdir(parents=True, exist_ok=True)
+                outname = images_dir / nombre_mapa
+                plt.savefig(outname, dpi=300, bbox_inches='tight', facecolor='white')
+                print(f"✓ Mapa QoS guardado: {outname}")
+
+            #plt.show()
+
+        return {
+            'dataframe': df,
+            'resumen': resumen,
+            'assignments_modelo': assignments_modelo
+        }
+    
+
+    def gtw_distance_uniforme(self, max_intentos=100,
+                     graficar=True, guardar=True, nombre_mapa='qos_logdistance_uniforme.png'):
+
+
+        print("\n Recalculando nodos IoT desde grid_cali uniforme...")
+        nodos_coords = []
+        
+        celdas = self.grid_cali
+        #de forma uniforme
+        M = len(celdas)
+        n_base = 7825 // M
+        resto = 7825 - (n_base * M)
+        sensores = np.full(M, n_base)
+        if resto > 0:
+            indices = np.random.choice(M, size=resto, replace=False)
+            sensores[indices] += 1
+
+        #de forma aleatoria
+        M = len(celdas)
+        # Para cada nodo, elige una celda al azar
+        #indices = np.random.choice(M, size=7828, replace=True)
+        for idx, (_, row) in enumerate(celdas.iterrows()):
+            n_nodos = sensores[idx]
+            poly = row['geometry']
+            minx, miny, maxx, maxy = poly.bounds
+
+            for _ in range(n_nodos):
+                intentos = 0
+                while intentos < max_intentos:
+                    x = np.random.uniform(minx, maxx)
+                    y = np.random.uniform(miny, maxy)
+                    punto = Point(x, y)
+                    if poly.contains(punto):
+                        nodos_coords.append([x, y])
+                        break
+                    intentos += 1
+                if intentos >= max_intentos:
+                    centroide = poly.centroid
+                    nodos_coords.append([centroide.x, centroide.y])
+        
+        self.nodos_iot_uniforme = np.array(nodos_coords)
+        print(f"  • Nodos recalculados: {len(self.nodos_iot_uniforme)}")
+        
+        nodos = np.asarray(self.nodos_iot_uniforme)
+        
+        gateways = np.asarray(self.gateways_ga)
+
+        # Parámetros de propagación (urbano)
+        frequency_mhz = 915.0
+        path_loss_exponent = 2.7
+        d0 = 1.0  # m
+        tx_power_dbm = 14.0
+
+        # Pérdida en distancia de referencia (espacio libre)
+        pl_d0 = 20 * np.log10(4 * np.pi * d0 * frequency_mhz * 1e6 / 3e8)
+
+        # Distancias de cada nodo a cada gateway -> matriz (N, K)
+        delta = nodos[:, np.newaxis, :] - gateways[np.newaxis, :, :]
+        dist_matrix = np.linalg.norm(delta, axis=2)
+        dist_clip = np.maximum(dist_matrix, d0)
+
+        # Path loss y RSSI para cada pareja nodo-gateway
+        path_loss_matrix = pl_d0 + 10 * path_loss_exponent * np.log10(dist_clip / d0)
+        rssi_matrix = tx_power_dbm - path_loss_matrix
+
+        # Elegir mejor gateway por mayor RSSI (equivale a menor path loss)
+        assignments_modelo = np.argmax(rssi_matrix, axis=1)
+
+        # Extraer métricas del mejor enlace por nodo
+        idx = np.arange(len(nodos))
+        dist = dist_matrix[idx, assignments_modelo]
+        path_loss_db = path_loss_matrix[idx, assignments_modelo]
+        rssi_dbm = rssi_matrix[idx, assignments_modelo]
+
+        # Clasificación de calidad por RSSI
+        calidad = np.where(
+            rssi_dbm > -80, 'Excelente',
+            np.where(rssi_dbm > -100, 'Buena',
+                     'Regular')
+        )
+
+        # Guardar asignación basada en modelo
+        self.assignments_logdistance_ga = assignments_modelo
+
+        # DataFrame por nodo
+        df = pd.DataFrame({
+            'id_nodo': np.arange(1, len(nodos) + 1),
+            'id_gateway_logdistance': assignments_modelo + 1,
+            'distancia_m': dist,
+            'path_loss_db': path_loss_db,
+            'rssi_dbm': rssi_dbm,
+            'calidad': calidad
+        })
+
+        # Resumen
+        conteo_calidad = df['calidad'].value_counts().to_dict()
+        resumen = {
+            'n_nodos': int(len(df)),
+            'n_gateways_ga': int(len(gateways)),
+            'distancia_m': {
+                'min': float(df['distancia_m'].min()),
+                'mean': float(df['distancia_m'].mean()),
+                'max': float(df['distancia_m'].max())
+            },
+            'path_loss_db': {
+                'min': float(df['path_loss_db'].min()),
+                'mean': float(df['path_loss_db'].mean()),
+                'max': float(df['path_loss_db'].max())
+            },
+            'rssi_dbm': {
+                'min': float(df['rssi_dbm'].min()),
+                'mean': float(df['rssi_dbm'].mean()),
+                'max': float(df['rssi_dbm'].max())
+            },
+            'calidad_nodos': {
+                'Excelente': int(conteo_calidad.get('Excelente', 0)),
+                'Buena': int(conteo_calidad.get('Buena', 0)),
+                'Regular': int(conteo_calidad.get('Regular', 0))
+            }
+        }
+
+        print(f"  • Nodos dentro del rango: {resumen['calidad_nodos']['Buena']+resumen['calidad_nodos']['Excelente']}")
+        print(f"  • Gateways GA: {resumen['n_gateways_ga']}")
+        """
+        print("  • Distancia (m): "
+              f"min={resumen['distancia_m']['min']:.2f}, "
+              f"mean={resumen['distancia_m']['mean']:.2f}, "
+              f"max={resumen['distancia_m']['max']:.2f}")
+        print("  • Path Loss (dB): "
+              f"min={resumen['path_loss_db']['min']:.2f}, "
+              f"mean={resumen['path_loss_db']['mean']:.2f}, "
+              f"max={resumen['path_loss_db']['max']:.2f}")
+        print("  • RSSI (dBm): "
+              f"min={resumen['rssi_dbm']['min']:.2f}, "
+              f"mean={resumen['rssi_dbm']['mean']:.2f}, "
+              f"max={resumen['rssi_dbm']['max']:.2f}")
+        print("  • Calidad nodos: "
+              f"Excelente={resumen['calidad_nodos']['Excelente']}, "
+              f"Buena={resumen['calidad_nodos']['Buena']}, "
+              f"Regular={resumen['calidad_nodos']['Regular']}"
+              )
+        """
+
+        if graficar:
+            fig, ax = plt.subplots(figsize=(16, 12))
+
+            # Mapa base si está disponible
+            self.cali.plot(ax=ax, color='white', edgecolor='black', linewidth=2.0, zorder=1)
+
+            if getattr(self, 'grid_cali', None) is not None:
+                try:
+                    self.grid_cali.plot(ax=ax, color="white", edgecolor="black", linewidth=0.25, zorder=2)
+                    
+                    # Mostrar conteo de celdas por nivel de inseguridad
+                    colores_nivel = {0: "Sin datos", 1:  "Muy Bajo", 2: "Bajo", 3: "Medio", 4: "Alto", 5: "Muy Alto"}
+                    
+                    # Contar sensores por nivel usando las asignaciones y celdas
+                    # Solo buscar en celdas con nivel > 0 (donde se generan nodos)
+                    sensores_por_nivel = {0: 0, 1: 0, 2: 0, 3: 0, 4: 0, 5: 0}
+                    
+                    celdas_con_sensores = self.grid_cali
+                    for i, nodo in enumerate(nodos):
+                        punto = Point(nodo[0], nodo[1])
+                        for _, celda in celdas_con_sensores.iterrows():
+                            if celda['geometry'].contains(punto):
+                                nivel = int(celda['nivel_inseguridad'])
+                                sensores_por_nivel[nivel] += 1
+                                break
+                except Exception:
+                    pass
+            
+            print("\n   Celdas y sensores por nivel de inseguridad:")
+            print("  " + "-"*65)
+            print(f"  {'Nivel':<8} {'Color':<12} {'Celdas':<10} {'Sensores':<10} {'Promedio':<10}")
+            print("  " + "-"*65)
+            total_celdas = 0
+            total_sensores = 0
+
+            for nivel in range(6):
+                count_celdas = len(self.grid_cali[self.grid_cali['nivel_inseguridad'] == nivel])
+                count_sensores = sensores_por_nivel.get(nivel, 0)
+                total_celdas += count_celdas
+                total_sensores += count_sensores
+                promedio = (count_sensores / count_celdas) if count_celdas > 0 else 0
+                
+                print(f"  {nivel:<8} {colores_nivel[nivel]:<12} {count_celdas:<10} {count_sensores:<10} {promedio:<10.2f}")
+            print("  " + "-"*65)
+            
+            sensores_por_celda = []
+            for _, celda in self.grid_cali.iterrows():
+                poly = celda['geometry']
+                count = sum(poly.contains(Point(x, y)) for x, y in self.nodos_iot_uniforme)
+                sensores_por_celda.append(count)
+            
+            if len(sensores_por_celda) > 0:
+                y = np.array(sensores_por_celda, dtype=float)
+                n = len(y)
+                y_sorted = np.sort(y)
+                suma_total = float(np.sum(y_sorted))
+                if suma_total == 0:
+                    gini = 0.0
+                else:
+                    i = np.arange(1, n + 1, dtype=float)
+                    gini = (2.0 * np.sum(i * y_sorted)) / (n * suma_total) - (n + 1.0) / n
+                    gini = max(0.0, min(1.0, gini))
+            else:
+                gini = 0.0
+            
+            print(f"Gini total de sensores en el mapa: {gini:.4f}")
+
+            print(f"  {'TOTAL':<8} {'':<12} {total_celdas:<10} {total_sensores:<10} Gini={gini:<10}")
+
+            color_map = {
+                'Excellent': "green",
+                'Good': "yellow",
+                'Regular': "#f05209",
+            }
+
+            calidad_map = {
+                'Excelente': 'Excellent',
+                'Buena': 'Good',
+                'Excelent': 'Excellent'
+            }
+    
+            calidad_norm = [calidad_map.get(c, c) for c in calidad]
+            colores_nodos = [color_map[c] for c in calidad_norm]
+
+            ax.scatter(nodos[:, 0], nodos[:, 1], c=colores_nodos, s=22, alpha=0.75,
+                       edgecolors='none', zorder=4, label=f'Nodos ({len(nodos)})')
+
+            ax.scatter(gateways[:, 0], gateways[:, 1], c='black', marker='^', s=220,
+                       edgecolors='white', linewidth=1.2, zorder=3,
+                       label=f'Gateways GA ({len(gateways)})')
+
+            # Conexiones suaves según asignación del modelo
+            gw_sel = gateways[assignments_modelo]
+            for i in range(len(nodos)):
+                ax.plot([nodos[i, 0], gw_sel[i, 0]], [nodos[i, 1], gw_sel[i, 1]],
+                        color='gray', alpha=0.05, linewidth=0.4, zorder=3)
+
+            handles = [
+                Line2D([0], [0], marker='o', color='w', markerfacecolor=color_map['Excellent'], markersize=8, label=f"Excellent ({resumen['calidad_nodos']['Excelente']})"),
+                Line2D([0], [0], marker='o', color='w', markerfacecolor=color_map['Good'], markersize=8, label=f"Good ({resumen['calidad_nodos']['Buena']})"),
+                Line2D([0], [0], marker='o', color='w', markerfacecolor=color_map['Regular'], markersize=8, label=f"Regular ({resumen['calidad_nodos']['Regular']})"),
+                Line2D([0], [0], marker='^', color='w', markerfacecolor='black', markersize=10, label=f"GA Gateways ({len(gateways)})")
+            ]
+            ax.legend(handles=handles, loc='upper right', fontsize=14, frameon=True, edgecolor='black')
+
+            ax.set_xlabel('X Coordinate (meters)', fontsize=14)
+            ax.set_ylabel('Y Coordinate (meters)', fontsize=14)
+            
+            ax.set_title('Number of Nodes by Log-Distance using Uniform Base Mode', fontsize=14, weight='bold')
+            ax.tick_params(axis='both', labelsize=14)
+            ax.grid(True, alpha=0.25, linestyle='--')
+            plt.tight_layout()
+
+            if guardar:
+                images_dir = Path(__file__).resolve().parent / 'images'
+                images_dir.mkdir(parents=True, exist_ok=True)
+                outname = images_dir / nombre_mapa
+                plt.savefig(outname, dpi=300, bbox_inches='tight', facecolor='white')
+                print(f"✓ Mapa QoS guardado: {outname}")
+
+            #plt.show()
+
+        return {
+            'dataframe': df,
+            'resumen': resumen,
+            'assignments_modelo': assignments_modelo
+        }
+    
+    def gtw_distance_aleatorio(self, max_intentos=100,
+                     graficar=True, guardar=True, nombre_mapa='qos_logdistance_aleatorio.png'):
+
+
+        print("\n Recalculando nodos IoT desde grid_cali aleatorio...")
+        nodos_coords = []
+        
+        celdas = self.grid_cali
+
+
+        #de forma aleatoria
+        M = len(celdas)
+        # Para cada nodo, elige una celda al azar
+        indices = np.random.choice(M, size=7825, replace=True)
+        for idx in indices:
+            row = celdas.iloc[idx]
+            poly = row['geometry']
+            minx, miny, maxx, maxy = poly.bounds
+
+            intentos = 0
+            while intentos < max_intentos:
+                    x = np.random.uniform(minx, maxx)
+                    y = np.random.uniform(miny, maxy)
+                    punto = Point(x, y)
+                    if poly.contains(punto):
+                        nodos_coords.append([x, y])
+                        break
+                    intentos += 1
+            if intentos >= max_intentos:
+                    centroide = poly.centroid
+                    nodos_coords.append([centroide.x, centroide.y])
+        
+        self.nodos_iot_aleatorio = np.array(nodos_coords)
+        print(f"  • Nodos recalculados: {len(self.nodos_iot_aleatorio)}")
+        
+        nodos = np.asarray(self.nodos_iot_aleatorio)
+        
+        gateways = np.asarray(self.gateways_ga)
+
+
+        # Parámetros de propagación (urbano)
+        frequency_mhz = 915.0
+        path_loss_exponent = 2.7
+        d0 = 1.0  # m
+        tx_power_dbm = 14.0
+
+        # Pérdida en distancia de referencia (espacio libre)
+        pl_d0 = 20 * np.log10(4 * np.pi * d0 * frequency_mhz * 1e6 / 3e8)
+
+        # Distancias de cada nodo a cada gateway -> matriz (N, K)
+        delta = nodos[:, np.newaxis, :] - gateways[np.newaxis, :, :]
+        dist_matrix = np.linalg.norm(delta, axis=2)
+        dist_clip = np.maximum(dist_matrix, d0)
+
+        # Path loss y RSSI para cada pareja nodo-gateway
+        path_loss_matrix = pl_d0 + 10 * path_loss_exponent * np.log10(dist_clip / d0)
+        rssi_matrix = tx_power_dbm - path_loss_matrix
+
+        # Elegir mejor gateway por mayor RSSI (equivale a menor path loss)
+        assignments_modelo = np.argmax(rssi_matrix, axis=1)
+
+        # Extraer métricas del mejor enlace por nodo
+        idx = np.arange(len(nodos))
+        dist = dist_matrix[idx, assignments_modelo]
+        path_loss_db = path_loss_matrix[idx, assignments_modelo]
+        rssi_dbm = rssi_matrix[idx, assignments_modelo]
+
+        # Clasificación de calidad por RSSI
+        calidad = np.where(
+            rssi_dbm > -80, 'Excelente',
+            np.where(rssi_dbm > -100, 'Buena',
+                     'Regular')
+        )
+
+        # Guardar asignación basada en modelo
+        self.assignments_logdistance_ga = assignments_modelo
+
+        # DataFrame por nodo
+        df = pd.DataFrame({
+            'id_nodo': np.arange(1, len(nodos) + 1),
+            'id_gateway_logdistance': assignments_modelo + 1,
+            'distancia_m': dist,
+            'path_loss_db': path_loss_db,
+            'rssi_dbm': rssi_dbm,
+            'calidad': calidad
+        })
+
+        # Resumen
+        conteo_calidad = df['calidad'].value_counts().to_dict()
+        resumen = {
+            'n_nodos': int(len(df)),
+            'n_gateways_ga': int(len(gateways)),
+            'distancia_m': {
+                'min': float(df['distancia_m'].min()),
+                'mean': float(df['distancia_m'].mean()),
+                'max': float(df['distancia_m'].max())
+            },
+            'path_loss_db': {
+                'min': float(df['path_loss_db'].min()),
+                'mean': float(df['path_loss_db'].mean()),
+                'max': float(df['path_loss_db'].max())
+            },
+            'rssi_dbm': {
+                'min': float(df['rssi_dbm'].min()),
+                'mean': float(df['rssi_dbm'].mean()),
+                'max': float(df['rssi_dbm'].max())
+            },
+            'calidad_nodos': {
+                'Excelente': int(conteo_calidad.get('Excelente', 0)),
+                'Buena': int(conteo_calidad.get('Buena', 0)),
+                'Regular': int(conteo_calidad.get('Regular', 0))
+            }
+        }
+
+        print(f"  • Nodos dentro del rango: {resumen['calidad_nodos']['Buena']+resumen['calidad_nodos']['Excelente']}")
+        """
+        print("  • Distancia (m): "
+              f"min={resumen['distancia_m']['min']:.2f}, "
+              f"mean={resumen['distancia_m']['mean']:.2f}, "
+              f"max={resumen['distancia_m']['max']:.2f}")
+        print("  • Path Loss (dB): "
+              f"min={resumen['path_loss_db']['min']:.2f}, "
+              f"mean={resumen['path_loss_db']['mean']:.2f}, "
+              f"max={resumen['path_loss_db']['max']:.2f}")
+        print("  • RSSI (dBm): "
+              f"min={resumen['rssi_dbm']['min']:.2f}, "
+              f"mean={resumen['rssi_dbm']['mean']:.2f}, "
+              f"max={resumen['rssi_dbm']['max']:.2f}")
+        print("  • Calidad nodos: "
+              f"Excelente={resumen['calidad_nodos']['Excelente']}, "
+              f"Buena={resumen['calidad_nodos']['Buena']}, "
+              f"Regular={resumen['calidad_nodos']['Regular']}"
+              )
+        """
+        if graficar:
+            fig, ax = plt.subplots(figsize=(16, 12))
+
+            # Mapa base si está disponible
+            self.cali.plot(ax=ax, color='white', edgecolor='black', linewidth=2.0, zorder=1)
+
+            if getattr(self, 'grid_cali', None) is not None:
+                try:
+                    self.grid_cali.plot(ax=ax, color="white", edgecolor="black", linewidth=0.25, zorder=2)
+
+                    # Mostrar conteo de celdas por nivel de inseguridad
+                    colores_nivel = {0: "Sin datos", 1:  "Muy Bajo", 2: "Bajo", 3: "Medio", 4: "Alto", 5: "Muy Alto"}
+                    
+                    # Contar sensores por nivel usando las asignaciones y celdas
+                    # Solo buscar en celdas con nivel > 0 (donde se generan nodos)
+                    sensores_por_nivel = {0: 0, 1: 0, 2: 0, 3: 0, 4: 0, 5: 0}
+                    
+                    celdas_con_sensores = self.grid_cali
+                    for i, nodo in enumerate(nodos):
+                        punto = Point(nodo[0], nodo[1])
+                        for _, celda in celdas_con_sensores.iterrows():
+                            if celda['geometry'].contains(punto):
+                                nivel = int(celda['nivel_inseguridad'])
+                                sensores_por_nivel[nivel] += 1
+                                break
+                except Exception:
+                    pass
+            
+            print("\n  Celdas y sensores por nivel de inseguridad:")
+            print("  " + "-"*65)
+            print(f"  {'Nivel':<8} {'Color':<12} {'Celdas':<10} {'Sensores':<10} {'Promedio':<10}")
+            print("  " + "-"*65)
+            total_celdas = 0
+            total_sensores = 0
+            for nivel in range(6):
+                count_celdas = len(self.grid_cali[self.grid_cali['nivel_inseguridad'] == nivel])
+                count_sensores = sensores_por_nivel.get(nivel, 0)
+                total_celdas += count_celdas
+                total_sensores += count_sensores
+                promedio = (count_sensores / count_celdas) if count_celdas > 0 else 0
+                
+                print(f"  {nivel:<8} {colores_nivel[nivel]:<12} {count_celdas:<10} {count_sensores:<10} {promedio:<10.2f}")
+            print("  " + "-"*65)
+
+            # Calcular el Gini total de sensores en todas las celdas
+            sensores_por_celda = []
+            for _, celda in self.grid_cali.iterrows():
+                poly = celda['geometry']
+                count = sum(poly.contains(Point(x, y)) for x, y in self.nodos_iot_aleatorio)
+                sensores_por_celda.append(count)
+            
+            if len(sensores_por_celda) > 0:
+                y = np.array(sensores_por_celda, dtype=float)
+                n = len(y)
+                y_sorted = np.sort(y)
+                suma_total = float(np.sum(y_sorted))
+                if suma_total == 0:
+                    gini = 0.0
+                else:
+                    i = np.arange(1, n + 1, dtype=float)
+                    gini = (2.0 * np.sum(i * y_sorted)) / (n * suma_total) - (n + 1.0) / n
+                    gini = max(0.0, min(1.0, gini))
+            else:
+                gini = 0.0
+            
+            print(f"Gini total de sensores en el mapa: {gini:.4f}")
+            print(f"  {'TOTAL':<8} {'':<12} {total_celdas:<10} {total_sensores:<10} Gini={gini:<10}")
+            print(f"  Celdas sin sensores (nivel 0): {sensores_por_nivel.get(0, 0)} sensores en {len(self.grid_cali[self.grid_cali['nivel_inseguridad'] == 0])} celdas")
+
+            color_map = {
+                'Excelente': "green",
+                'Buena': "yellow",
+                'Regular': "#f05209",
+            }
+            colores_nodos = [color_map[c] for c in calidad]
+
+            ax.scatter(nodos[:, 0], nodos[:, 1], c=colores_nodos, s=22, alpha=0.75,
+                       edgecolors='none', zorder=4, label=f'Nodos ({len(nodos)})')
+
+            ax.scatter(gateways[:, 0], gateways[:, 1], c='black', marker='^', s=220,
+                       edgecolors='white', linewidth=1.2, zorder=3,
+                       label=f'Gateways GA ({len(gateways)})')
+
+            # Conexiones suaves según asignación del modelo
+            gw_sel = gateways[assignments_modelo]
+            for i in range(len(nodos)):
+                ax.plot([nodos[i, 0], gw_sel[i, 0]], [nodos[i, 1], gw_sel[i, 1]],
+                        color='gray', alpha=0.05, linewidth=0.4, zorder=3)
+
+            handles = [
+                Line2D([0], [0], marker='o', color='w', markerfacecolor=color_map['Excelente'], markersize=8, label=f"Excelente ({resumen['calidad_nodos']['Excelente']})"),
+                Line2D([0], [0], marker='o', color='w', markerfacecolor=color_map['Buena'], markersize=8, label=f"Buena ({resumen['calidad_nodos']['Buena']})"),
+                Line2D([0], [0], marker='o', color='w', markerfacecolor=color_map['Regular'], markersize=8, label=f"Regular ({resumen['calidad_nodos']['Regular']})"),
+                Line2D([0], [0], marker='^', color='w', markerfacecolor='black', markersize=10, label=f"Gateways GA ({len(gateways)})")
+            ]
+            ax.legend(handles=handles, loc='upper right', fontsize=14, frameon=True, edgecolor='black')
+
+            ax.set_xlabel('X Coordinate (meters)', fontsize=14)
+            ax.set_ylabel('Y Coordinate (meters)', fontsize=14)
+            ax.set_title('Number of Nodes by Log-Distance using Random Base Model', fontsize=14, weight='bold')
+            ax.tick_params(axis='both', labelsize=14)
+            ax.grid(True, alpha=0.25, linestyle='--')
+            plt.tight_layout()
+
+            if guardar:
+                images_dir = Path(__file__).resolve().parent / 'images'
+                images_dir.mkdir(parents=True, exist_ok=True)
+                outname = images_dir / nombre_mapa
+                plt.savefig(outname, dpi=300, bbox_inches='tight', facecolor='white')
+                print(f"✓ Mapa QoS guardado: {outname}")
+
+            #plt.show()
+
+        return {
+            'dataframe': df,
+            'resumen': resumen,
+            'assignments_modelo': assignments_modelo
+        }
+
+    def visualizar_gtw_distance_comparativo(self, factor_densidad=1.0,
+                                            max_intentos=100, mostrar_conexiones=False,
+                                            guardar=True, nombre_mapa='qos_logdistance_comparativo.png'):
+        """
+        Genera una sola figura con 3 subgráficas:
+        - gtw_distance (riesgo)
+        - gtw_distance_uniforme (uniforme)
+        - gtw_distance_aleatorio (aleatorio)
+        """
+        print("\n Generating comparative figure (risk / uniform / random)...")
+
+        # Ejecutar cálculos sin graficar ni guardar imágenes individuales
+        res_riesgo = self.gtw_distance(
+            factor_densidad=factor_densidad,
+            max_intentos=max_intentos,
+            graficar=False,
+            guardar=False
+        )
+        res_uniforme = self.gtw_distance_uniforme(
+            max_intentos=max_intentos,
+            graficar=False,
+            guardar=False
+        )
+        res_aleatorio = self.gtw_distance_aleatorio(
+            max_intentos=max_intentos,
+            graficar=False,
+            guardar=False
+        )
+
+        escenarios = [
+            ("Uniform Base Model", self.nodos_iot_uniforme, res_uniforme['assignments_modelo'], res_uniforme['dataframe']['calidad']),
+            ("Random Base Model", self.nodos_iot_aleatorio, res_aleatorio['assignments_modelo'], res_aleatorio['dataframe']['calidad']),
+            ("Risk Model", self.nodos_iot_riesgo, res_riesgo['assignments_modelo'], res_riesgo['dataframe']['calidad'])
+
+        ]
+
+        color_map = {
+            'Excellent': "green",
+            'Good': "yellow",
+            'Regular': "#f05209",
+        }
+
+        calidad_map = {
+            'Excelente': 'Excellent',
+            'Buena': 'Good',
+            'Excelent': 'Excellent'
+        }
+
+        fig, axes = plt.subplots(1, 3, figsize=(24, 8))
+        for ax, (titulo, nodos, assignments_modelo, calidad) in zip(axes, escenarios):
+            # Mapa base
+            self.cali.plot(ax=ax, color='white', edgecolor='black', linewidth=2.0, zorder=1)
+            if getattr(self, 'grid_cali', None) is not None:
+                try:
+                    self.grid_cali.plot(ax=ax, color="white", edgecolor="black", linewidth=0.25, zorder=2)
+                except Exception:
+                    pass
+
+            gateways = np.asarray(self.gateways_ga)
+            nodos = np.asarray(nodos)
+
+            calidad_norm = [calidad_map.get(c, c) for c in calidad]
+            colores_nodos = [color_map[c] for c in calidad_norm]
+
+            ax.scatter(nodos[:, 0], nodos[:, 1], c=colores_nodos, s=22, alpha=0.75,
+                       edgecolors='none', zorder=4, label=f'Nodos ({len(nodos)})')
+
+            ax.scatter(gateways[:, 0], gateways[:, 1], c='black', marker='^', s=220,
+                       edgecolors='white', linewidth=1.2, zorder=3,
+                       label=f'Gateways GA ({len(gateways)})')
+
+            if mostrar_conexiones:
+                gw_sel = gateways[assignments_modelo]
+                for i in range(len(nodos)):
+                    ax.plot([nodos[i, 0], gw_sel[i, 0]], [nodos[i, 1], gw_sel[i, 1]],
+                            color='gray', alpha=0.05, linewidth=0.4, zorder=3)
+
+            handles = [
+                Line2D([0], [0], marker='o', color='w', markerfacecolor=color_map['Excellent'], markersize=8, label="Excellent"),
+                Line2D([0], [0], marker='o', color='w', markerfacecolor=color_map['Good'], markersize=8, label="Good"),
+                Line2D([0], [0], marker='o', color='w', markerfacecolor=color_map['Regular'], markersize=8, label="Regular"),
+                Line2D([0], [0], marker='^', color='w', markerfacecolor='black', markersize=10, label="GA Gateways")
+            ]
+            ax.legend(handles=handles, loc='lower right', fontsize=14, frameon=True, edgecolor='black')
+
+            ax.set_xlabel('X Coordinate (meters)', fontsize=14)
+            ax.set_ylabel('Y Coordinate (meters)', fontsize=14)
+            ax.set_title(titulo, fontsize=14, weight='bold')
+            ax.tick_params(axis='both', labelsize=14)
+            ax.grid(True, alpha=0.25, linestyle='--')
+
+        plt.tight_layout()
+
+        if guardar:
+            images_dir = Path(__file__).resolve().parent / 'images'
+            images_dir.mkdir(parents=True, exist_ok=True)
+            outname = images_dir / nombre_mapa
+            plt.savefig(outname, dpi=300, bbox_inches='tight', facecolor='white')
+            print(f"✓ Figura comparativa guardada: {outname}")
+
+        #plt.show()
+
+        return {
+            'riesgo': res_riesgo,
+            'uniforme': res_uniforme,
+            'aleatorio': res_aleatorio
+        }
+    
+
+    def visualizar_gtw_distance(self, res_uniforme, res_aleatorio, res_riesgo, nombre_mapa='qos_logdistance_comparativo.png'):
+
+        escenarios = [
+            ("Uniform Base Model", self.nodos_iot_uniforme, res_uniforme['assignments_modelo'], res_uniforme['dataframe']['calidad']),
+            ("Random Base Model", self.nodos_iot_aleatorio, res_aleatorio['assignments_modelo'], res_aleatorio['dataframe']['calidad']),
+            ("Risk Model", self.nodos_iot_riesgo, res_riesgo['assignments_modelo'], res_riesgo['dataframe']['calidad'])
+
+        ]
+
+        color_map = {
+            'Excellent': "green",
+            'Good': "yellow",
+            'Regular': "#f05209",
+        }
+
+        calidad_map = {
+            'Excelente': 'Excellent',
+            'Buena': 'Good',
+            'Excelent': 'Excellent'
+        }
+
+        fig, axes = plt.subplots(1, 3, figsize=(24, 8))
+        for ax, (titulo, nodos, assignments_modelo, calidad) in zip(axes, escenarios):
+            # Mapa base
+            self.cali.plot(ax=ax, color='white', edgecolor='black', linewidth=2.0, zorder=1)
+            if getattr(self, 'grid_cali', None) is not None:
+                try:
+                    self.grid_cali.plot(ax=ax, color="white", edgecolor="black", linewidth=0.25, zorder=2)
+                except Exception:
+                    pass
+
+            gateways = np.asarray(self.gateways_ga)
+            nodos = np.asarray(nodos)
+
+            calidad_norm = [calidad_map.get(c, c) for c in calidad]
+            colores_nodos = [color_map[c] for c in calidad_norm]
+
+            ax.scatter(nodos[:, 0], nodos[:, 1], c=colores_nodos, s=22, alpha=0.75,
+                       edgecolors='none', zorder=4, label=f'Nodos ({len(nodos)})')
+
+            ax.scatter(gateways[:, 0], gateways[:, 1], c='black', marker='^', s=220,
+                       edgecolors='white', linewidth=1.2, zorder=3,
+                       label=f'Gateways GA ({len(gateways)})')
+
+            handles = [
+                Line2D([0], [0], marker='o', color='w', markerfacecolor=color_map['Excellent'], markersize=8, label="Excellent"),
+                Line2D([0], [0], marker='o', color='w', markerfacecolor=color_map['Good'], markersize=8, label="Good"),
+                Line2D([0], [0], marker='o', color='w', markerfacecolor=color_map['Regular'], markersize=8, label="Regular"),
+                Line2D([0], [0], marker='^', color='w', markerfacecolor='black', markersize=10, label="GA Gateways")
+            ]
+            ax.legend(handles=handles, loc='lower right', fontsize=14, frameon=True, edgecolor='black')
+
+            ax.set_xlabel('X Coordinate (meters)', fontsize=14)
+            ax.set_ylabel('Y Coordinate (meters)', fontsize=14)
+            ax.set_title(titulo, fontsize=14, weight='bold')
+            ax.tick_params(axis='both', labelsize=14)
+            ax.grid(True, alpha=0.25, linestyle='--')
+
+        plt.tight_layout()
+
+        images_dir = Path(__file__).resolve().parent / 'images'
+        images_dir.mkdir(parents=True, exist_ok=True)
+        outname = images_dir / nombre_mapa
+        plt.savefig(outname, dpi=300, bbox_inches='tight', facecolor='white')
+        print(f"✓ Figura comparativa guardada: {outname}")
+
+        #plt.show()
+
+        return {
+            'riesgo': res_riesgo,
+            'uniforme': res_uniforme,
+            'aleatorio': res_aleatorio
+        }
+
+        
+    def guardarmetricas(self):
+
+        fig, ax = plt.subplots(figsize=(16, 12))
+
+        # Mapa base si está disponible
+        self.cali.plot(ax=ax, color='white', edgecolor='black', linewidth=2.0, zorder=1)
+
+        nodos_riesgo = np.asarray(self.nodos_iot_riesgo) if self.nodos_iot_riesgo is not None else np.empty((0, 2))
+        gateways_riesgo = np.asarray(self.gateways_ga) if self.gateways_ga is not None else np.empty((0, 2))
+        assignments_modelo_riesgo = getattr(self, 'assignments_logdistance_ga', None)
+
+        if getattr(self, 'grid_cali', None) is not None:
+            try:
+                self.grid_cali.plot(ax=ax, color="white", edgecolor="black", linewidth=0.25, zorder=2)
+                                    
+                # Contar sensores por nivel usando las asignaciones y celdas
+                # Solo buscar en celdas con nivel > 0 (donde se generan nodos)
+                sensores_por_nivel = {0: 0, 1: 0, 2: 0, 3: 0, 4: 0, 5: 0}
+                
+                celdas_con_sensores = self.grid_cali
+                for i, nodo in enumerate(nodos_riesgo):
+                    punto = Point(nodo[0], nodo[1])
+                    for _, celda in celdas_con_sensores.iterrows():
+                        if celda['geometry'].contains(punto):
+                            nivel = int(celda['nivel_inseguridad'])
+                            sensores_por_nivel[nivel] += 1
+                            break
+            except Exception:
+                pass
+
+        df = pd.DataFrame(
+        self.nodos_iot_riesgo,
+        columns=['x', 'y']
+        )
+    
+        # Filtrar nodos dentro del cuadrado
+        x_ini = 726000
+        y_ini = 867300
+        ancho = 4000
+        alto = 4000
+        rect = Rectangle((x_ini, y_ini), ancho, alto, linewidth=5, edgecolor='deepskyblue', facecolor='aqua', alpha=0.8, zorder=3)
+        ax.add_patch(rect)
+        x_fin = x_ini + ancho
+        y_fin = y_ini + alto
+        nodos_cuadrado = df[(df['x'] >= x_ini) & (df['x'] <= x_fin) & (df['y'] >= y_ini) & (df['y'] <= y_fin)]
+        if len(nodos_cuadrado) == 1000:
+                        print(f"✓ Mil nodos dentro")
+        else:
+            print(f"No hay mil nodos: {len(nodos_cuadrado)}")
+        
+        nodos_cuadrado.insert(0, 'id', range(0, len(nodos_cuadrado)))
+
+        output_path = Path(__file__).resolve().parent / "data_base"
+        output_path.mkdir(parents=True, exist_ok=True)
+        out_path_cuadrado = output_path / "nodos_cuadrado.csv"
+        nodos_cuadrado.to_csv(out_path_cuadrado, index=False)
+
+        # Guardar gateways en CSV adicional (solo dentro del cuadrado)
+        df_gateways = pd.DataFrame(self.gateways_ga, columns=['x', 'y']) if self.gateways_ga is not None else pd.DataFrame(columns=['x', 'y'])
+        if not df_gateways.empty:
+            df_gateways = df_gateways[(df_gateways['x'] >= x_ini) & (df_gateways['x'] <= x_fin) &
+                                      (df_gateways['y'] >= y_ini) & (df_gateways['y'] <= y_fin)]
+        df_gateways.insert(0, 'id', range(0, len(df_gateways)))
+        out_path_gateways = output_path / "gateways_cuadrado.csv"
+        df_gateways.to_csv(out_path_gateways, index=False)
+
+
+        if len(nodos_riesgo) > 0:
+            ax.scatter(nodos_riesgo[:, 0], nodos_riesgo[:, 1], c='#f05209', s=22, alpha=0.75,
+                        edgecolors='none', zorder=4, label=f'Nodos ({len(nodos_riesgo)})')
+
+        if len(gateways_riesgo) > 0:
+            ax.scatter(gateways_riesgo[:, 0], gateways_riesgo[:, 1], c='black', marker='^', s=220,
+                        edgecolors='white', linewidth=1.2, zorder=3,
+                        label=f'Gateways GA ({len(gateways_riesgo)})')
+
+        # Conexiones suaves según asignación del modelo
+        if assignments_modelo_riesgo is not None and len(gateways_riesgo) > 0:
+            gw_sel = gateways_riesgo[assignments_modelo_riesgo]
+            for i in range(len(nodos_riesgo)):
+                ax.plot([nodos_riesgo[i, 0], gw_sel[i, 0]], [nodos_riesgo[i, 1], gw_sel[i, 1]],
+                        color='gray', alpha=0.05, linewidth=0.4, zorder=3)
+
+
+        ax.set_xlabel('X Coordinate (meters)', fontsize=14)
+        ax.set_ylabel('Y Coordinate (meters)', fontsize=14)
+        ax.set_title('Number of Nodes by Log-Distance using Risk Model', fontsize=14, weight='bold')
+        ax.tick_params(axis='both', labelsize=14)
+        ax.grid(True, alpha=0.25, linestyle='--')
+        plt.tight_layout()
+
+        images_dir = Path(__file__).resolve().parent / 'images'
+        images_dir.mkdir(parents=True, exist_ok=True)
+        outname = images_dir / 'qos_logdistance_riesgo.png'
+        plt.savefig(outname, dpi=300, bbox_inches='tight', facecolor='white')
+        print(f"✓ Mapa QoS guardado: {outname}")
+
+        #plt.show() 
+
+        df = pd.read_csv("data_base/nodos_cuadrado.csv")
+
+        nodos = df[['x','y']].to_numpy()
+        
+        df = pd.read_csv("data_base/gateways_cuadrado.csv")
+
+        print(len(nodos))
+        
+        gateways = df[['x','y']].to_numpy()
+
+        # Parámetros de propagación (urbano)
+        frequency_mhz = 915.0
+        path_loss_exponent = 2.7
+        d0 = 1.0  # m
+        tx_power_dbm = 14.0
+
+        # Pérdida en distancia de referencia (espacio libre)
+        pl_d0 = 20 * np.log10(4 * np.pi * d0 * frequency_mhz * 1e6 / 3e8)
+
+        # Distancias de cada nodo a cada gateway -> matriz (N, K)
+        delta = nodos[:, np.newaxis, :] - gateways[np.newaxis, :, :]
+        dist_matrix = np.linalg.norm(delta, axis=2)
+        dist_clip = np.maximum(dist_matrix, d0)
+
+        # Path loss y RSSI para cada pareja nodo-gateway
+        path_loss_matrix = pl_d0 + 10 * path_loss_exponent * np.log10(dist_clip / d0)
+        rssi_matrix = tx_power_dbm - path_loss_matrix
+
+        # Elegir mejor gateway por mayor RSSI (equivale a menor path loss)
+        assignments_modelo = np.argmax(rssi_matrix, axis=1)
+
+        # Extraer métricas del mejor enlace por nodo
+        idx = np.arange(len(nodos))
+        # Calcular distancia usando fórmula euclidiana explícita
+        gw_assigned = gateways[assignments_modelo]
+        dist = np.sqrt((nodos[:, 0] - gw_assigned[:, 0])**2 + (nodos[:, 1] - gw_assigned[:, 1])**2)
+        path_loss_db = path_loss_matrix[idx, assignments_modelo]
+        rssi_dbm = rssi_matrix[idx, assignments_modelo]
+
+        # Estimar SNR y asignar Spreading Factor (SF)
+        noise_floor_dbm = -120.0 + np.random.uniform(-3.0, 3.0, size=len(nodos))
+        snr_db = rssi_dbm - noise_floor_dbm
+        sf = np.select(
+            [snr_db > 7.5, snr_db > 5.0, snr_db > 2.5, snr_db > 0.0, snr_db > -2.5],
+            [7, 8, 9, 10, 11],
+            default=12
+        )
+
+        # Potencia de transmisión (tp) por nodo
+        tp_dbm = np.full(len(nodos), tx_power_dbm)
+
+        # Estimar packets_sent a partir de una PDR logística
+        pdr = 100.0 / (1.0 + np.exp(-(snr_db - 2.0)))
+        total_packets = 100.0
+        packets_sent = np.maximum(1, np.round(total_packets * (pdr / 100.0))).astype(int)
+
+        # Guardar asignación basada en modelo
+        self.assignments_logdistance_ga = assignments_modelo
+
+        # DataFrame por nodo
+        df = pd.DataFrame({
+            'id_nodo': np.arange(0, len(nodos)),
+            'id_gateway': assignments_modelo,
+            'pos_x': nodos[:, 0],
+            'pos_y': nodos[:, 1],
+            'distancia_m': dist,
+            'sf': sf.astype(int),
+            'tp': tp_dbm,
+            'packets_sent': packets_sent
+        })
+        
+        
+        output_path = Path(__file__).resolve().parent / "data_base"
+        output_path.mkdir(parents=True, exist_ok=True)
+        out_path_simple = output_path / "info_milnodos_riesgo.csv"
+
+        df.to_csv(out_path_simple, index=False)
+        
+    
     def ejecutar_pipeline_georeferenciacion(self):
         """
         Ejecuta el pipeline completo de georeferenciación
@@ -619,39 +1726,39 @@ class GeoreferenciaRedLoRaWAN(GeoreferenciaMapa):
         self.clasificar_niveles_inseguridad()
         
         print("\n✓ Georeferenciación completada")
-        
-    def ejecutar_pipeline_red_lorawan(self, estrategia_nodos='ponderada', num_nodos=1000, metodo_optimizacion='kmeans', mostrar_conexiones=True):
+
+    def ejecutar_pipeline_red_lorawan(self, num_nodos=1000):
         """
         Ejecuta el pipeline completo de optimización de red LoRaWAN
-        
-        Args:
-            estrategia_nodos: 'ponderada', 'uniforme', 'critica' o None (si num_nodos especificado)
-            num_nodos: número exacto de nodos IoT (None = automático según estrategia)
-            auto_k_gateways: si True, determina K de gateways automáticamente
-            mostrar_conexiones: si True, muestra conexiones nodo->gateway en mapa
         """
         print("\n" + "="*70)
         print("FASE 2: OPTIMIZACIÓN DE RED LoRaWAN")
-        print("="*70)
         
         # Generar nodos IoT
         if num_nodos is not None:
             self.generar_nodos_iot_desde_delitos(num_nodos_exacto=num_nodos)
         else:
-            self.generar_nodos_iot_desde_delitos(estrategia=estrategia_nodos)
+            self.generar_nodos_iot_desde_delitos()
         
         # Optimizar gateways
-        if metodo_optimizacion == 'ga':
-            self.optimizar_gateways_ga()
-        else:
-            self.optimizar_gateways_kmeans()
-                    
-        # Visualizar usando el método seleccionado (comparar_metodos ya ajustó self.gateways/self.assignments)
-        self.visualizar_red_completa(mostrar_conexiones=mostrar_conexiones, guardar=True)
-                    
+        self.optimizar_gateways_ga()
+        self.optimizar_gateways_kmeans()
+        
+        self.comparar_metodos()
+        
+        # Ejecutar K-Means y guardar su mapa
+        # for visualization use kmeans results
+        self.gateways = red_cali.gateways_kmeans
+        self.assignments = red_cali.assignments_kmeans
+        self.visualizar_red_completa(mostrar_conexiones=True, guardar=True, name='red_lorawan_kmeans.png')
+        
+        # Ejecutar GA y guardar su mapa
+        # for visualization use ga results
+        self.gateways = red_cali.gateways_ga
+        self.assignments = red_cali.assignments_ga
+        self.visualizar_red_completa(mostrar_conexiones=True, guardar=True, name='red_lorawan_ga.png')
+        
         print("\n" + "="*70)
-        print("✅ PROCESO COMPLETO FINALIZADO")
-        print("="*70)
 
 # ============================================================================
 # EJECUCIÓN PRINCIPAL
@@ -659,15 +1766,18 @@ class GeoreferenciaRedLoRaWAN(GeoreferenciaMapa):
 
 if __name__ == "__main__":
     import json
+    import pickle
+    import os
     
     # Cargar configuración
-    resultados_dir = Path(__file__).resolve().parent / "resultados_optimizacion"
+    resultados_dir = Path(__file__).resolve().parent / "optimizacion_celda"
     
-    with open(resultados_dir / "mejorcelda.json") as f:
+    with open(resultados_dir / "resumen_tres_metodos.json") as f:
         config = json.load(f)
-        mejorcelda = config['mejorcelda']
+        mejorcelda = config['recomendacion']
+        mejor_metodo_nombre = config['mejor_metodo']
     
-    print(f"\n🔧 Tamaño de celda óptimo: {mejorcelda} m\n")
+    print(f"\n Tamaño de celda óptimo: {mejorcelda} m")
     
     # Definir pesos de delitos
     PESOS_DELITOS = {
@@ -693,30 +1803,45 @@ if __name__ == "__main__":
     # ========== CREAR INSTANCIA ==========
     red_cali = GeoreferenciaRedLoRaWAN(archivos_especificos, PESOS_DELITOS, mejorcelda)
     
-    # ========== FASE 1: GEOREFERENCIACIÓN ==========
-    red_cali.ejecutar_pipeline_georeferenciacion()
-    
-    # ========== FASE 2: RED LoRaWAN ==========
-    red_cali.generar_nodos_iot_desde_delitos(num_nodos_exacto=1000)
-    # Guardar posiciones de nodos en CSV
-    #red_cali.guardar_nodos_iot_csv('nodos_iot.csv')
-    
-    # Ejecutar K-Means y guardar su mapa
-    red_cali.optimizar_gateways_kmeans()
-    # for visualization use kmeans results
-    red_cali.gateways = red_cali.gateways_kmeans
-    red_cali.assignments = red_cali.assignments_kmeans
-    red_cali.visualizar_red_completa(mostrar_conexiones=True, guardar=True, name='red_lorawan_kmeans.png')
-    
-    # Ejecutar GA y guardar su mapa
-    red_cali.optimizar_gateways_ga()
-    # Guardar posiciones de gateways GA en CSV
-    #red_cali.guardar_gateways_ga_csv('gateways_ga.csv')
-    # for visualization use ga results
-    red_cali.gateways = red_cali.gateways_ga
-    red_cali.assignments = red_cali.assignments_ga
-    red_cali.visualizar_red_completa(mostrar_conexiones=True, guardar=True, name='red_lorawan_ga.png')
-    
-    # Comparativa: ambos sets sobre el mapa de Cali
-    red_cali.visualizar_red_completa_comparativa(mostrar_conexiones=True, guardar=True)
+    pipeline_flag = "pipeline/pipeline_red_lorawan_done.pkl"
 
+    pipeline_geo = "pipeline/pipeline_georeferenciacion_done.pkl"
+
+    pipeline_nodos = "pipeline/pipeline_nodos_done.pkl"
+
+    # Pipeline de georeferenciación
+    if not os.path.exists(pipeline_geo):
+        # Ejecuta el pipeline
+        red_cali.ejecutar_pipeline_georeferenciacion()
+        # Guarda el resultado (si la función retorna algo)
+        with open(pipeline_geo, "wb") as f:
+            pickle.dump(red_cali, f)
+    else:
+        print("El pipeline ya fue ejecutado, no se recalcula.")
+        with open(pipeline_geo, "rb") as f:
+            red_cali = pickle.load(f)
+
+    # Pipeline de red LoRaWan
+    if not os.path.exists(pipeline_flag):
+        # Ejecuta el pipeline
+        red_cali.ejecutar_pipeline_red_lorawan(num_nodos=1000)
+        # Guarda el resultado (si la función retorna algo)
+        with open(pipeline_flag, "wb") as f:
+            pickle.dump(red_cali, f)
+    else:
+        print("El pipeline ya fue ejecutado, no se recalcula.")
+        with open(pipeline_flag, "rb") as f:
+            red_cali = pickle.load(f)
+
+    if not os.path.exists(pipeline_nodos):
+        # Ejecuta el pipeline
+        red_cali.visualizar_gtw_distance_comparativo()
+        # Guarda el resultado (si la función retorna algo)
+        with open(pipeline_nodos, "wb") as f:
+            pickle.dump(red_cali, f)
+    else:
+        print("El pipeline ya fue ejecutado, no se recalcula.")
+        with open(pipeline_nodos, "rb") as f:
+            red_cali = pickle.load(f)
+
+    red_cali.guardarmetricas()

@@ -1,0 +1,249 @@
+{
+  "metadata": {
+    "execution_timestamp": "2026-04-14T10:27:32.458078",
+    "algorithm_name": "DPLACE v2",
+    "description": "LoRaWAN Gateway Placement Model for Dynamic IoT Applications",
+    "total_devices": 100,
+    "optimal_gateways": 23,
+    "generalized_gateways": 2,
+    "simulation_area_km2": 100.0,
+    "fixes_applied": [
+      "FIX1: Restricción SF con modelo Okumura-Hata en FCM",
+      "FIX2: B=10 para Gap Statistics (IC 95%)",
+      "FIX3: calculate_qos_metrics() integrado al pipeline",
+      "FIX4: FCM vectorizado con numpy broadcasting"
+    ]
+  },
+  "phase1": {
+    "phase": "Phase 1: Preprocessing",
+    "timestamp": "2026-04-14T10:27:31.807364",
+    "optimal_num_gateways": 23,
+    "gap_statistics": [
+      -0.11095337728100496,
+      -0.11095337728284527,
+      -0.11095337727308952,
+      -0.11095337726667331,
+      -0.1109533772726694,
+      -0.11095337727515542,
+      -0.11095337727329646,
+      -0.11095337726525667,
+      -0.11095337725906562,
+      -0.10166760099030991,
+      -0.10773323217047448,
+      -0.09933415279064173,
+      -0.08667583120257882,
+      -0.08494597104950685,
+      -0.08453434626137923,
+      -0.08761061576084872,
+      -0.08663493208062745,
+      -0.12434511371148593,
+      -0.12345319491785078,
+      -0.12994866377269254,
+      -0.11690127660170235,
+      -0.11775551839012666,
+      -0.045368385554733326,
+      -0.06176727824553785,
+      -0.06099312561552006
+    ],
+    "initial_gateways": [
+      [
+        2.968566874395863,
+        3.723407593654447
+      ],
+      [
+        4.229499470348244,
+        7.508314037516455
+      ],
+      [
+        7.816450267249793,
+        2.042236294266452
+      ],
+      [
+        2.604037062991177,
+        6.617657698077909
+      ],
+      [
+        7.474219459807689,
+        5.78722134825936
+      ],
+      [
+        4.345326205251337,
+        2.9838253159878083
+      ],
+      [
+        3.7158158399623695,
+        6.2547026978629825
+      ],
+      [
+        3.0784794766338517,
+        5.2084875988345845
+      ],
+      [
+        6.074474957604164,
+        1.7068894989033616
+      ],
+      [
+        3.7333942560617155,
+        9.436435896804081
+      ],
+      [
+        3.240482684520176,
+        1.135138146087431
+      ],
+      [
+        4.985065654957818,
+        2.9945998804718417
+      ],
+      [
+        6.139570155285959,
+        5.155660178317426
+      ],
+      [
+        0.8330656960967616,
+        8.571082714971245
+      ],
+      [
+        3.939392353173383,
+        2.7603169379397574
+      ],
+      [
+        6.045077200589965,
+        7.053638508718404
+      ],
+      [
+        1.4893425714477257,
+        4.941548853828522
+      ],
+      [
+        9.093341118215665,
+        2.5489739316267492
+      ],
+      [
+        5.16470392735242,
+        6.939628534248064
+      ],
+      [
+        5.191100823300041,
+        4.3149165536648475
+      ],
+      [
+        3.3835797730131922,
+        3.519349210056012
+      ],
+      [
+        6.79602561085981,
+        4.320351303459826
+      ],
+      [
+        9.067947796717082,
+        7.951206227273165
+      ]
+    ],
+    "membership_matrix_shape": [
+      100,
+      23
+    ],
+    "fixes_applied": {
+      "fix1_sf_restriction": "Okumura-Hata activo, d_max=2.8925 km",
+      "fix2_B_value": "B=10 (mejorado desde 3 para IC 95%)",
+      "fix4_vectorized_fcm": "Membresía FCM calculada con broadcasting numpy"
+    },
+    "algorithm_details": {
+      "method": "Gap Statistics + Fuzzy C-Means vectorizado",
+      "gap_analysis": "Comparación de J_m,j real vs. escenarios aleatorios",
+      "fcm_convergence": "Matriz de partición actualizada iterativamente",
+      "membership_meaning": "μ_ij ∈ [0,1] indica grado de asociación dispositivo-gateway"
+    }
+  },
+  "phase2": {
+    "phase": "Phase 2: Processing",
+    "timestamp": "2026-04-14T10:27:32.452169",
+    "num_scenarios": 3,
+    "step3_gap_statistics_for_kmeans": {
+      "num_escenarios_procesados": 3,
+      "candidatos_gateway_recopilados": 69,
+      "metodo": "Multi-scenario Fuzzy C-Means vectorizado",
+      "objetivo": "Capturar dinamismo de nodos siguiendo patrón Poisson",
+      "gap_analysis_kmeans": {
+        "gap_values": [
+          0.22475730423748175,
+          0.23354132693252083,
+          0.09866522436302816,
+          -0.05795029410959973,
+          0.10512262980921872,
+          -0.013051554052680991,
+          -0.06227456845860857,
+          0.18617623683064455,
+          0.0937382354037748,
+          0.2802935285319519,
+          0.31905221882118884,
+          0.40836539549009965,
+          0.5239181699392645,
+          0.5650269269194159,
+          0.4604678780305034
+        ],
+        "optimal_k_detected": 2,
+        "formula": "Gap(k) = (1/B)sum(log(J*_k,b)) - log(J_k)",
+        "criterio": "Gap(k) >= Gap(k+1) - s(k+1)"
+      }
+    },
+    "step4_kmeans_consolidation": {
+      "generalized_gateways": [
+        [
+          4.3508124675825135,
+          6.674622814311851
+        ],
+        [
+          5.362992050179923,
+          2.850495470375775
+        ]
+      ],
+      "num_clusters_finales": 2,
+      "inertia_j_k": 423.68831511387197,
+      "formula_inertia": "J_k = Σ_k Σ_j ||GW(k)_j - C_k||²",
+      "objetivo": "Centralizar y consolidar posiciones para robustez"
+    },
+    "generalized_gateways": [
+      [
+        4.3508124675825135,
+        6.674622814311851
+      ],
+      [
+        5.362992050179923,
+        2.850495470375775
+      ]
+    ],
+    "inertia_metric": 423.68831511387197,
+    "algorithm_details": {
+      "method": "Multi-scenario FCM + Gap Statistics para K-Means + K-Means consolidación",
+      "poisson_model": "lambda = N/T = 1.6667 msg/s",
+      "paso3": "Gap Statistics para K-Means (múltiples escenarios con FCM)",
+      "paso4": "Posicionamiento final con K-Means (consolidación)",
+      "optimal_k_determined_by": "Gap Statistics"
+    }
+  },
+  "qos_evaluation": {
+    "coverage_rate": 0.23,
+    "devices_covered": 23,
+    "total_devices": 100,
+    "link_viability_rate_okumura_hata": 0.42,
+    "viable_links": 42,
+    "d_max_viable_km": 2.8925201367529985,
+    "sf_coverage_per_spreading_factor": {
+      "SF7_coverage_rate": 0.09,
+      "SF8_coverage_rate": 0.13,
+      "SF9_coverage_rate": 0.16,
+      "SF10_coverage_rate": 0.21,
+      "SF11_coverage_rate": 0.26,
+      "SF12_coverage_rate": 0.42
+    },
+    "avg_distance_km": 3.1247082833383,
+    "max_distance_km": 5.532920435295475,
+    "load_balance_std_normalized": 0.0,
+    "redundancy_ratio": 2.1368062209760184,
+    "devices_per_gateway": [
+      50,
+      50
+    ]
+  }
+}

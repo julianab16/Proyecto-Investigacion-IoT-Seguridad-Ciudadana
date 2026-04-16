@@ -28,16 +28,7 @@ class LoRaWANMetricsEvaluator:
         self.assignments = np.array(assignments)
         self.frequency = frequency
 
-        # Validar coherencia de datos
-        if len(self.nodes) != len(self.assignments):
-            raise ValueError(f"❌ {len(self.nodes)} nodos != {len(self.assignments)} asignaciones")
 
-        if np.max(self.assignments) >= len(self.gateways):
-            raise ValueError(f"❌ Índice {np.max(self.assignments)} excede {len(self.gateways)} gateways")
-        
-        if np.min(self.assignments) < 0:
-            raise ValueError(f"❌ Asignación inválida: índice negativo {np.min(self.assignments)}")
-                
         # Parámetros del modelo de propagación
         self.path_loss_exponent = 2.7  # Entorno urbano típico
         self.reference_distance = 1.0  # metros
@@ -189,14 +180,14 @@ class LoRaWANMetricsEvaluator:
         }
         
         # Calcular estadísticas
-        self._calculate_statistics()
+        #self._calculate_statistics()
         
         return self.metrics
     
     def _calculate_statistics(self):
         """Calcula estadísticas de las métricas"""
         print("\n" + "="*70)
-        print("📊 ESTADÍSTICAS DE MÉTRICAS")
+        print(" ESTADÍSTICAS DE MÉTRICAS")
         print("="*70)
         
         metrics_stats = {}
@@ -214,13 +205,13 @@ class LoRaWANMetricsEvaluator:
             metrics_stats[metric_name] = stats_dict
         
         # Imprimir estadísticas
-        print("\n📏 RANGO DE COMUNICACIÓN:")
+        print("\n RANGO DE COMUNICACIÓN:")
         print(f"   • Distancia Promedio: {metrics_stats['distance']['mean']:.2f} m")
         print(f"   • Distancia Mínima: {metrics_stats['distance']['min']:.2f} m")
         print(f"   • Distancia Máxima: {metrics_stats['distance']['max']:.2f} m")
         print(f"   • Desviación Estándar: {metrics_stats['distance']['std']:.2f} m")
         
-        print("\n📶 RSSI (Fuerza de Señal):")
+        print("\n RSSI (Fuerza de Señal):")
         print(f"   • RSSI Promedio: {metrics_stats['rssi']['mean']:.2f} dBm")
         print(f"   • RSSI Mínimo: {metrics_stats['rssi']['min']:.2f} dBm")
         print(f"   • RSSI Máximo: {metrics_stats['rssi']['max']:.2f} dBm")
@@ -238,7 +229,7 @@ class LoRaWANMetricsEvaluator:
         print(f"   • Regular (-100 a -120 dBm): {fair} nodos ({fair/len(self.nodes)*100:.1f}%)")
         print(f"   • Pobre (<-120 dBm): {poor} nodos ({poor/len(self.nodes)*100:.1f}%)")
         
-        print("\n📡 SNR (Calidad de Señal):")
+        print("\n SNR (Calidad de Señal):")
         print(f"   • SNR Promedio: {metrics_stats['snr']['mean']:.2f} dB")
         print(f"   • SNR Mínimo: {metrics_stats['snr']['min']:.2f} dB")
         print(f"   • SNR Máximo: {metrics_stats['snr']['max']:.2f} dB")
@@ -255,7 +246,7 @@ class LoRaWANMetricsEvaluator:
         print(f"   • Regular (-10 a 0 dB): {fair_snr} nodos ({fair_snr/len(self.nodes)*100:.1f}%)")
         print(f"   • Pobre (<-10 dB): {poor_snr} nodos ({poor_snr/len(self.nodes)*100:.1f}%)")
         
-        print("\n📦 PDR (Tasa de Entrega de Paquetes):")
+        print("\n PDR (Tasa de Entrega de Paquetes):")
         print(f"   • PDR Promedio: {metrics_stats['pdr']['mean']:.2f}%")
         print(f"   • PDR Mínimo: {metrics_stats['pdr']['min']:.2f}%")
         print(f"   • PDR Máximo: {metrics_stats['pdr']['max']:.2f}%")
@@ -274,15 +265,15 @@ class LoRaWANMetricsEvaluator:
         
         # Evaluación general
         avg_pdr = metrics_stats['pdr']['mean']
-        print(f"\n🎯 EVALUACIÓN GENERAL DE LA RED:")
+        print(f"\n EVALUACIÓN GENERAL DE LA RED:")
         if avg_pdr >= 90:
-            print(f"   ✅ EXCELENTE - PDR promedio: {avg_pdr:.2f}%")
+            print(f"   EXCELENTE - PDR promedio: {avg_pdr:.2f}%")
         elif avg_pdr >= 75:
-            print(f"   ✅ BUENA - PDR promedio: {avg_pdr:.2f}%")
+            print(f"   BUENA - PDR promedio: {avg_pdr:.2f}%")
         elif avg_pdr >= 50:
-            print(f"   ⚠️  REGULAR - PDR promedio: {avg_pdr:.2f}%")
+            print(f"   REGULAR - PDR promedio: {avg_pdr:.2f}%")
         else:
-            print(f"   ❌ POBRE - PDR promedio: {avg_pdr:.2f}% - Se requiere optimización")
+            print(f"   POBRE - PDR promedio: {avg_pdr:.2f}% - Se requiere optimización")
         
         self.metrics_stats = metrics_stats
     
@@ -436,25 +427,6 @@ class LoRaWANMetricsEvaluator:
         plt.tight_layout()
         plt.show()
 
-    """
-    def export_results(self, filename='lorawise_metrics_results.csv'):
-        #Exporta los resultados a un archivo CSV
-        results_df = pd.DataFrame({
-            'Node_ID': range(len(self.nodes)),
-            'X_m': self.nodes[:, 0],
-            'Y_m': self.nodes[:, 1],
-            'Gateway_Assigned': [f'GW-{a+1}' for a in self.assignments],
-            'Distance_m': self.metrics['distance'],
-            'RSSI_dBm': self.metrics['rssi'],
-            'SNR_dB': self.metrics['snr'],
-            'PDR_percent': self.metrics['pdr']
-        })
-        
-        results_df.to_csv(filename, index=False)
-        print(f"\n💾 Resultados exportados a: {filename}")
-        
-        return results_df
-    """
 
 from matplotlib.lines import Line2D
 
@@ -474,9 +446,9 @@ if __name__ == "__main__":
     try:
         nodos = pd.read_csv("nodos_iot.csv")
         X = nodos[["X_m", "Y_m"]].values
-        print(f"\n✅ CSV cargado: {len(X)} nodos")
+        print(f"\n CSV cargado: {len(X)} nodos")
     except:
-        print("\n⚠️  Usando datos de ejemplo...")
+        print("\n  Usando datos de ejemplo...")
 
     width = 10000
     height = 10000
@@ -550,7 +522,7 @@ if __name__ == "__main__":
     # 6. COMPARACIÓN DE MÉTRICAS
     # ============================================================================
     print("\n" + "="*70)
-    print("📊 COMPARACIÓN DE RENDIMIENTO")
+    print(" COMPARACIÓN DE RENDIMIENTO")
     print("="*70)
     
     print(f"\n{'Métrica':<25} {'K-Means':<15} {'GA':<15} {'Mejor':<10}")
@@ -585,74 +557,6 @@ if __name__ == "__main__":
         print(f"{metric_name:<25} {kmeans_val:<15.2f} {ga_val:<15.2f} {better:<10}")
     
     print("\n" + "="*70)
-    print("✅ EVALUACIÓN COMPLETA FINALIZADA")
+    print(" EVALUACIÓN COMPLETA FINALIZADA")
     print("="*70)
 
-    # ============================================================================
-    # 7. GRÁFICA COMPARATIVA CON ESTILO DE LA IMAGEN DE REFERENCIA
-    # ============================================================================
-    print("\n" + "="*70)
-    print("📍 COMPARACIÓN DE POSICIONES DE GATEWAYS")
-    print("="*70)
-    fig, ax = plt.subplots(figsize=(12, 10))
-    
-    # Plotear todos los nodos IoT (azul claro como en la imagen)
-    ax.scatter(X[:, 0], X[:, 1], c='cornflowerblue', s=90, alpha=0.6, 
-               label='Nodos IoT', zorder=1, edgecolors='none')
-    
-    # Gateways GA (NEGRO con CÍRCULOS)
-    ax.scatter(gateways_ga[:, 0], gateways_ga[:, 1],
-               c='#FF1493', marker='^', s=300, edgecolors='white',
-               linewidth=2, label=f'GA (n={len(gateways_ga)})', 
-               zorder=1, alpha=0.9)
-    
-    # Gateways K-Means (ROSA/MAGENTA con TRIÁNGULOS)
-    ax.scatter(gateways_kmeans[:, 0], gateways_kmeans[:, 1],
-               c='black', marker='o', s=300, edgecolors='white',
-               linewidth=1, label=f'K-Means (n={len(gateways_kmeans)})', 
-               zorder=1, alpha=0.9)
-    
-    # Configuración de la gráfica
-    ax.set_xlim(0, width)
-    ax.set_ylim(0, height)
-    
-    # Fondo blanco limpio
-    ax.set_facecolor('white')
-    fig.patch.set_facecolor('white')
-    
-    ax.set_xlabel('Length (m)', fontsize=13, fontweight='normal')
-    ax.set_ylabel('Width (m)', fontsize=13, fontweight='normal')
-    ax.set_title(f'Gateway Positioning',
-                 fontsize=14, fontweight='normal', pad=15)
-    
-    # Leyenda estilo imagen de referencia
-    handles = [
-        Line2D([0], [0], marker='o', color='w', markerfacecolor='cornflowerblue', markersize=10, label='Nodos IoT'),
-        Line2D([0], [0], marker='o', color='w', markerfacecolor='#FF1493', markersize=10, label=f'K-Means (n={len(gateways_kmeans)})'),
-        Line2D([0], [0], marker='o', color='w', markerfacecolor='black', markersize=10, label=f'GA (n={len(gateways_ga)})')
-    ]
-    legend = ax.legend(handles=handles, loc='upper right', fontsize=11, framealpha=1.0, 
-                      edgecolor='black', fancybox=False, shadow=False,
-                      frameon=True)
-    legend.get_frame().set_linewidth(1.5)
-    
-    # Grid sutil
-    ax.grid(True, alpha=0.2, linestyle='-', linewidth=0.5, color='gray')
-    
-    # Remover spines superiores y derechos para aspecto más limpio
-    ax.spines['top'].set_visible(True)
-    ax.spines['right'].set_visible(True)
-    ax.spines['top'].set_linewidth(1.5)
-    ax.spines['right'].set_linewidth(1.5)
-    ax.spines['bottom'].set_linewidth(1.5)
-    ax.spines['left'].set_linewidth(1.5)
-    
-    plt.tight_layout()
-    plt.savefig('comparacion_gateways_kmeans_vs_ga.png', dpi=300, 
-                bbox_inches='tight', facecolor='white')
-    print("\n💾 Gráfica guardada: comparacion_gateways_kmeans_vs_ga.png")
-    plt.show()
-    
-    print("\n" + "="*70)
-    print("✅ ANÁLISIS VISUAL COMPLETADO")
-    print("="*70)

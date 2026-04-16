@@ -169,10 +169,11 @@ class GeneticAlgorithmGatewayOptimizer:
             
             self.fitness_history.append(self.best_fitness)
             
+            """
             if verbose and (generation % 20 == 0 or generation == self.generations - 1):
                 print(f"Gen {generation:3d} | Best Fitness: {self.best_fitness:12.2f} | "
                       f"Avg: {np.mean(fitness_values):12.2f}")
-            
+            """
             # Crear nueva población
             new_population = []
             
@@ -231,10 +232,10 @@ class LoRaWISEPGAElbow:
         # Calcular rango de k automáticamente o usar el especificado
         if auto_k_range:
             self.max_k = self._calculate_optimal_k_range()
-            print(f"\n🔍 Rango de K determinado automáticamente: [{self.min_k}, {self.max_k}]")
+            print(f"\n Rango de K determinado automáticamente: [{self.min_k}, {self.max_k}]")
         else:
             self.max_k = max_k
-            print(f"\n📌 Usando rango de K manual: [{self.min_k}, {self.max_k}]")
+            print(f"\n Usando rango de K manual: [{self.min_k}, {self.max_k}]")
         
         self.wcss_values = []
         self.optimal_k = None
@@ -252,11 +253,7 @@ class LoRaWISEPGAElbow:
         self.area_km2 = (self.width * self.height) / 1e6
         self.density = self.n_nodes / self.area_km2 if self.area_km2 > 0 else 0
         
-        print(f"\n📊 Información del área:")
-        print(f"   • Nodos totales: {self.n_nodes}")
-        print(f"   • Área: {self.width:.1f}m × {self.height:.1f}m ({self.area_km2:.2f} km²)")
-        print(f"   • Densidad: {self.density:.1f} nodos/km²")
-    
+
     def _calculate_optimal_k_range(self) -> int:
         """
         Calcula automáticamente el rango óptimo de k basado en múltiples criterios
@@ -271,17 +268,15 @@ class LoRaWISEPGAElbow:
         Returns:
             max_k: Número máximo de gateways a evaluar
         """
-        print(f"\n🔬 Calculando rango óptimo de K...")
+        print(f"\n Calculando rango óptimo de K...")
         
         # Criterio 1: Regla de Sturges (k ≈ 1 + log2(n))
         k_sturges = int(1 + 3.322 * np.log10(self.n_nodes))
-        print(f"   • Regla de Sturges: k ≤ {k_sturges}")
         
         # Criterio 2: Densidad de nodos (1 GW por cada 50-150 nodos)
         k_density_min = max(1, self.n_nodes // 150)
         k_density_max = max(2, self.n_nodes // 50)
         k_density = (k_density_min + k_density_max) // 2
-        print(f"   • Por densidad: k ∈ [{k_density_min}, {k_density_max}] → {k_density}")
         
         # Criterio 3: Análisis de distancias (calcular dispersión)
         centroid = np.mean(self.nodes, axis=0)
@@ -290,17 +285,14 @@ class LoRaWISEPGAElbow:
         # Radio de cobertura típico LoRaWAN en urbano: ~2-5 km
         typical_coverage_radius = 2000  # metros
         k_coverage = max(1, int(np.ceil(self.area_km2 * 1e6 / (np.pi * typical_coverage_radius**2))))
-        print(f"   • Por cobertura LoRaWAN (r≈2km): k ≥ {k_coverage}")
         
         # Criterio 4: Dispersión espacial
         # Usar percentil 90 de distancias para evitar outliers
         p90_distance = np.percentile(distances_to_centroid, 90)
         k_dispersion = max(2, int(np.ceil(p90_distance / 500)))  # 1 GW cada 500m de dispersión
-        print(f"   • Por dispersión espacial (p90={p90_distance:.1f}m): k ≈ {k_dispersion}")
         
         # Criterio 5: Regla √n (heurística común en clustering)
         k_sqrt = int(np.ceil(np.sqrt(self.n_nodes)))
-        print(f"   • Regla √n: k ≈ {k_sqrt}")
         
         # Criterio 6: Límites prácticos
         k_min_practical = 2  # Mínimo práctico
@@ -322,9 +314,7 @@ class LoRaWISEPGAElbow:
             weights['dispersion'] * k_dispersion +
             weights['sqrt'] * k_sqrt
         )
-        
-        print(f"\n   📊 K ponderado combinado: {k_weighted}")
-        
+                
         # Aplicar límites de seguridad
         # Rango: [max(criterios mínimos), min(criterios máximos)]
         k_min_suggested = max(k_min_practical, min(k_coverage, k_density_min))
@@ -337,8 +327,8 @@ class LoRaWISEPGAElbow:
         k_exploration_max = int(k_final * 1.3)
         k_exploration_max = min(k_exploration_max, k_max_practical)
         
-        print(f"   ✅ Rango sugerido: [{k_min_suggested}, {k_exploration_max}]")
-        print(f"   🎯 K central estimado: {k_final}")
+        print(f"    Rango sugerido: [{k_min_suggested}, {k_exploration_max}]")
+        print(f"    K central estimado: {k_final}")
         
         return k_exploration_max
         
@@ -352,7 +342,7 @@ class LoRaWISEPGAElbow:
         Returns:
             wcss: Mejor fitness (WCSS) encontrado
         """
-        print(f"\n🧬 Optimizando para k={k} gateways...")
+        #print(f"\n Optimizando para k={k} gateways...")
         
         # Crear optimizador GA
         ga = GeneticAlgorithmGatewayOptimizer(
@@ -398,10 +388,6 @@ class LoRaWISEPGAElbow:
         Returns:
             optimal_k: Número óptimo de gateways
         """
-        print("\n" + "="*70)
-        print("     MÉTODO DEL CODO")
-        print("     (Determinación automática de K)")
-        print("="*70)
         
         k_range = range(self.min_k, min(self.max_k + 1, self.n_nodes))
         self.wcss_values = []
@@ -412,17 +398,16 @@ class LoRaWISEPGAElbow:
         for i, k in enumerate(k_range):
             wcss = self.calculate_wcss_with_ga(k, verbose=verbose_ga)
             self.wcss_values.append(wcss)
-            print(f"✓ k={k:2d} | WCSS = {wcss:12.2f}")
+            #print(f"✓ k={k:2d} | WCSS = {wcss:12.2f}")
             
             # Early stopping basado en tasa de mejora
             if i > 0:
                 improvement_rate = (self.wcss_values[i-1] - wcss) / self.wcss_values[i-1]
-                print(f"   └─ Mejora: {improvement_rate*100:.2f}%")
+                #print(f"   └─ Mejora: {improvement_rate*100:.2f}%")
                 
                 # Si la mejora es menor al 5%, considerar detención
                 if improvement_rate < 0.05:
                     no_improvement_count += 1
-                    print(f"   ⚠️  Mejora marginal detectada")
                 else:
                     no_improvement_count = 0
 
@@ -431,7 +416,7 @@ class LoRaWISEPGAElbow:
         self.optimal_k = self._find_elbow_point(actual_k_range, self.wcss_values)
         
         print(f"\n{'='*70}")
-        print(f"🎯 K ÓPTIMO DETECTADO: {self.optimal_k} gateways")
+        print(f" K ÓPTIMO DETECTADO: {self.optimal_k} gateways")
         print(f"   └─ WCSS: {self.wcss_values[self.optimal_k - self.min_k]:.2f}")
         print(f"   └─ Evaluaciones realizadas: {len(self.wcss_values)}")
         print(f"{'='*70}\n")
@@ -542,11 +527,9 @@ class LoRaWISEPGAElbow:
             gateways: Posiciones óptimas de las gateways
             assignments: Asignación de cada nodo a su gateway más cercana
         """
-        if self.optimal_k is None:
-            raise ValueError("❌ Ejecuta elbow_method() primero")
-        
+
         # Ejecutar GA para obtener la mejor solución con k óptimo
-        print(f"\n🧬 Ejecutando Algoritmo Genético con k={self.optimal_k}...")
+        print(f"\n Ejecutando Algoritmo Genético con k={self.optimal_k}...")
         ga = GeneticAlgorithmGatewayOptimizer(
             nodes=self.nodes,
             n_gateways=int(self.optimal_k),
@@ -566,7 +549,6 @@ class LoRaWISEPGAElbow:
         distances = cdist(self.nodes, gateways, metric='euclidean')
         assignments = np.argmin(distances, axis=1)
         
-        print(f"✅ Optimización GA completada | Fitness final: {best_fitness:.2f}")
         
         # Calcular estadísticas
         stats = self._calculate_statistics(gateways, assignments)
@@ -574,7 +556,7 @@ class LoRaWISEPGAElbow:
         if plot:
             self._plot_solution(gateways, assignments)
 
-            self._print_statistics(stats)
+            #self._print_statistics(stats)
         
         self.best_gateways = gateways
         return gateways, assignments
@@ -668,14 +650,13 @@ if __name__ == "__main__":
     
     print("\n" + "="*80)
     print("  LoRaWISEP-GA: OPTIMIZACIÓN AUTOMÁTICA DE GATEWAYS")
-    print("  (Determinación automática del número óptimo de gateways)")
     print("="*80 + "\n")
     
     # Cargar datos
     try:
         nodos = pd.read_csv("nodos_iot.csv")
         X = nodos[["X_m", "Y_m"]].values
-        print(f"✅ CSV cargado: {len(X)} nodos")
+        print(f" CSV cargado: {len(X)} nodos")
     except:
         print("No se ha cargado el archivo")
 

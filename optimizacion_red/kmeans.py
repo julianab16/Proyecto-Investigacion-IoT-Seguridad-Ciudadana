@@ -37,11 +37,10 @@ class LoRaWISEPOptimization:
         if auto_k_range:
             self.max_k = self._calculate_optimal_k_range()
             self.min_k = 1
-            print(f"\n🔍 Rango de K determinado automáticamente: [{self.min_k}, {self.max_k}]")
         else:
             self.max_k = max_k
             self.min_k = min_k
-            print(f"\n📌 Usando rango de K manual: [{self.min_k}, {self.max_k}]")
+            print(f"\n Usando rango de K manual: [{self.min_k}, {self.max_k}]")
 
     def calculate_wcss(self, k):
         """
@@ -65,10 +64,6 @@ class LoRaWISEPOptimization:
         self.area_km2 = (self.width * self.height) / 1e6
         self.density = self.n_nodes / self.area_km2 if self.area_km2 > 0 else 0
         
-        print(f"\n📊 Información del área:")
-        print(f"   • Nodos totales: {self.n_nodes}")
-        print(f"   • Área: {self.width:.1f}m × {self.height:.1f}m ({self.area_km2:.2f} km²)")
-        print(f"   • Densidad: {self.density:.1f} nodos/km²")
     
     def _calculate_optimal_k_range(self) -> int:
         """
@@ -84,17 +79,15 @@ class LoRaWISEPOptimization:
         Returns:
             max_k: Número máximo de gateways a evaluar
         """
-        print(f"\n🔬 Calculando rango óptimo de K...")
+        print(f"\n Calculando rango óptimo de K...")
         
         # Criterio 1: Regla de Sturges (k ≈ 1 + log2(n))
         k_sturges = int(1 + 3.322 * np.log10(self.n_nodes))
-        print(f"   • Regla de Sturges: k ≤ {k_sturges}")
         
         # Criterio 2: Densidad de nodos (1 GW por cada 50-150 nodos)
         k_density_min = max(1, self.n_nodes // 150)
         k_density_max = max(2, self.n_nodes // 50)
         k_density = (k_density_min + k_density_max) // 2
-        print(f"   • Por densidad: k ∈ [{k_density_min}, {k_density_max}] → {k_density}")
         
         # Criterio 3: Análisis de distancias (calcular dispersión)
         centroid = np.mean(self.nodes, axis=0)
@@ -103,17 +96,14 @@ class LoRaWISEPOptimization:
         # Radio de cobertura típico LoRaWAN en urbano: ~2-5 km
         typical_coverage_radius = 2000  # metros
         k_coverage = max(1, int(np.ceil(self.area_km2 * 1e6 / (np.pi * typical_coverage_radius**2))))
-        print(f"   • Por cobertura LoRaWAN (r≈2km): k ≥ {k_coverage}")
         
         # Criterio 4: Dispersión espacial
         # Usar percentil 90 de distancias para evitar outliers
         p90_distance = np.percentile(distances_to_centroid, 90)
         k_dispersion = max(2, int(np.ceil(p90_distance / 500)))  # 1 GW cada 500m de dispersión
-        print(f"   • Por dispersión espacial (p90={p90_distance:.1f}m): k ≈ {k_dispersion}")
         
         # Criterio 5: Regla √n (heurística común en clustering)
         k_sqrt = int(np.ceil(np.sqrt(self.n_nodes)))
-        print(f"   • Regla √n: k ≈ {k_sqrt}")
         
         # Criterio 6: Límites prácticos
         k_min_practical = 1  # Mínimo práctico
@@ -136,7 +126,7 @@ class LoRaWISEPOptimization:
             weights['sqrt'] * k_sqrt
         )
         
-        print(f"\n   📊 K ponderado combinado: {k_weighted}")
+        print(f"\n    K ponderado combinado: {k_weighted}")
         
         # Aplicar límites de seguridad
         # Rango: [max(criterios mínimos), min(criterios máximos)]
@@ -150,8 +140,8 @@ class LoRaWISEPOptimization:
         k_exploration_max = int(k_final * 1.3)
         k_exploration_max = min(k_exploration_max, k_max_practical)
         
-        print(f"   ✅ Rango sugerido: [{k_min_suggested}, {k_exploration_max}]")
-        print(f"   🎯 K central estimado: {k_final}")
+        print(f"    Rango sugerido: [{k_min_suggested}, {k_exploration_max}]")
+        print(f"    K central estimado: {k_final}")
         
         return k_exploration_max
     
@@ -183,7 +173,7 @@ class LoRaWISEPOptimization:
             else:
                 self.silhouette_scores.append(0)
             
-            print(f"k={k:2d} | WCSS: {wcss:10.2f} | Silhouette: {self.silhouette_scores[-1]:.4f}")
+            #print(f"k={k:2d} | WCSS: {wcss:10.2f} | Silhouette: {self.silhouette_scores[-1]:.4f}")
         
         # Determinar k óptimo usando segunda derivada
         self.optimal_k = self._find_elbow_point(k_range, self.wcss_values)
@@ -295,7 +285,7 @@ class LoRaWISEPOptimization:
         
         # Calcular estadísticas
         stats = self._calculate_statistics()
-        self._print_statistics(stats)
+        #self._print_statistics(stats)
         
         if plot:
             self._plot_clusters()
@@ -408,11 +398,8 @@ if __name__ == "__main__":
     # Opción A: Cargar desde tu CSV
     nodos = pd.read_csv("nodos_iot.csv")
     X = nodos[["X_m", "Y_m"]].values
-        
-    print(f"📍 Total de nodos encontrados: {len(X)}")
-    print(f"📊 Rango X: [{X[:, 0].min():.2f}, {X[:, 0].max():.2f}] metros")
-    print(f"📊 Rango Y: [{X[:, 1].min():.2f}, {X[:, 1].max():.2f}] metros")
-    
+    print(f" Total de nodos encontrados: {len(X)}")
+
     nodes = X
     n_nodes = len(nodes)
 
@@ -429,11 +416,3 @@ if __name__ == "__main__":
     # Posicionar gateways usando K-Means
     gateways, assignments = optimizer.apply_kmeans(plot=True)
     
-    # 5. Obtener resultados
-    print("\n" + "="*60)
-    print("RESULTADOS FINALES")
-    print("="*60)
-    print(f"\n✅ Optimización completada exitosamente")
-    print(f"\n📍 POSICIONES DE GATEWAYS:")
-    for i, gw in enumerate(gateways):
-        print(f"   GW-{i+1}: ({gw[0]:.2f}, {gw[1]:.2f})")
