@@ -1,0 +1,8 @@
+{
+  "moran_i": 0.3342,
+  "valor_esperado": -0.0005,
+  "z_score": 3.1673,
+  "p_valor": 0.001539,
+  "significancia": "Muy significativo (p < 0.01) ***",
+  "clusters": {
+    "HH_hot_spots": 
