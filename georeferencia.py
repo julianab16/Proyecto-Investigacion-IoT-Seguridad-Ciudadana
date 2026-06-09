@@ -14,7 +14,7 @@ from libpysal.weights import KNN
 from matplotlib.patches import Rectangle
 
 class GeoreferenciaMapa:
-    def __init__(self, archivos_especificos, PESOS_DELITOS, mejorcelda, bbox=None):
+    def __init__(self, archivos_especificos, PESOS_DELITOS, mejorcelda, bbox):
         """
         Inicializa la clase de georeferenciación
         
@@ -98,9 +98,6 @@ class GeoreferenciaMapa:
             bbox_polygon = box(minx, miny, maxx, maxy)
             bbox_gdf = gpd.GeoDataFrame([1], geometry=[bbox_polygon], crs="EPSG:3116")
             self.cali = gpd.overlay(self.cali, bbox_gdf, how='intersection')
-        
-        # Mostrar límites numéricos
-        xmin, ymin, xmax, ymax = self.cali.total_bounds
         
         # Calcular e imprimir el área de Cali
         area_m2 = self.cali.geometry.area.sum()
@@ -216,13 +213,13 @@ class GeoreferenciaMapa:
             except FileNotFoundError:
                 pass
             except Exception as e:
-                print(f"  ⚠ Error procesando {archivo}: {str(e)}")
+                print(f"  Error procesando {archivo}: {str(e)}")
         
         print(f"\n✓ Total de archivos procesados: {archivos_encontrados}")
         
         # Concatenar datasets
         self.df = pd.concat(datasets, ignore_index=True)
-        print(f"✓ Total de registros combinados: {len(self.df):,}")
+        print(f" Total de registros combinados: {len(self.df):,}")
         
         # Normalizar columnas
         self.df.columns = self.df.columns.str.strip().str.lower()
@@ -431,12 +428,15 @@ class GeoreferenciaMapa:
             
     def visualizar_mapa(self):
         """Genera y guarda el mapa de calor"""
-        print("\n[6/6] Generando mapa de calor...")
-        
-        fig, ax = plt.subplots(figsize=(12, 10))
-        
+        print("\n Generando mapa de calor...")
+        plt.rcParams['font.family'] = 'Arial'
+        textwidth_pt = 472.03123
+        fig_width_in = textwidth_pt / 72.27         # ≈ 6.531 in
+        fig_height_in = fig_width_in * 0.75         # proporción deseada, ajústala a tu gusto
+        fig, ax = plt.subplots(figsize=(fig_width_in, fig_height_in))
+                
         # Mapa base
-        self.cali.plot(ax=ax, color="white", edgecolor="black", linewidth=2.5, zorder=1)
+        self.cali.plot(ax=ax, color="white", edgecolor="black", linewidth=1.0, zorder=1)
         
         # Si hay bounding box, establecer límites exactos
         if self.bbox is not None:
@@ -457,8 +457,8 @@ class GeoreferenciaMapa:
         images_dir.mkdir(parents=True, exist_ok=True)
         ax.axis('off')  # Ocultar ejes
         out_path_simple = images_dir / "mapa_calor_solo_cali.png"
-        plt.savefig(out_path_simple, dpi=300, bbox_inches='tight', pad_inches=0)
-        print(f"  ✓ Mapa simple guardado: {out_path_simple.name}")
+        plt.savefig(out_path_simple, dpi=600, bbox_inches='tight', pad_inches=0)
+        print(f"  Mapa simple guardado: {out_path_simple.name}")
         ax.axis('on')  # Volver a mostrar ejes para el mapa completo
 
         # Límites administrativos
@@ -468,17 +468,16 @@ class GeoreferenciaMapa:
             if len(comunas) > 0:
                 comunas = comunas[comunas.geometry.type.isin(['Polygon', 'MultiPolygon'])]
                 comunas = comunas.to_crs(self.cali.crs)
-                comunas.plot(ax=ax, color="none", edgecolor="black", linewidth=2.0, 
+                comunas.plot(ax=ax, color="none", edgecolor="black", linewidth=1.0, 
                             alpha=0.6, linestyle='-', zorder=3)
-                print("  ✓ Límites administrativos cargados")
+                print("  Límites administrativos cargados")
         except:
-            print("  ⚠ No se pudieron cargar límites administrativos")
+            print("  No se pudieron cargar límites administrativos")
         
-        # Título
 
-        plt.xlabel("X Coordinate (meters)", fontsize=14)
-        plt.ylabel("Y Coordinate (meters)", fontsize=14)
-        ax.tick_params(axis='both', labelsize=14)
+        plt.xlabel("X Coordinate (m)", fontsize=9)
+        plt.ylabel("Y Coordinate (m)", fontsize=9)
+        ax.tick_params(axis='both', labelsize=9)
 
         # Barra de color
         sm = plt.cm.ScalarMappable(cmap=cmap, norm=plt.Normalize(vmin=0, vmax=5))
@@ -487,8 +486,8 @@ class GeoreferenciaMapa:
         cbar.set_ticks([0, 1, 2, 3, 4, 5])
         cbar.set_ticklabels(['No data', 'Very Low\n(0-20%)', 'Low\n(20-40%)',
                             'Medium\n(40-60%)', 'High\n(60-80%)', 'Very High\n(80-100%)'])
-        cbar.set_label("Level of Insecurity", fontsize=14)
-        cbar.ax.tick_params(labelsize=14)
+        cbar.set_label("Level of Insecurity", fontsize=9)
+        cbar.ax.tick_params(labelsize=9)
         
         # Panel de estadísticas
         dentro = self.gdf_casos[self.gdf_casos.within(self.cali.geometry.iloc[0])]
@@ -498,24 +497,24 @@ class GeoreferenciaMapa:
         
         stats_text = (
             f"GENERAL STATISTICS\n"
-            f"{'─'*21}\n"
+            f"{'─'*15}\n"
             f"Total events: {total_eventos:,}\n"
             f"Total cells: {total_celdas:,}\n"
             f"Cells with data: {celdas_activas:,}\n"
             f"Cells without data: {total_celdas - celdas_activas:,}"
         )
         
-        plt.text(0.60, 0.16, stats_text, transform=ax.transAxes, fontsize=12,
-                verticalalignment='top', family='monospace',
-                bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.9, pad=0.8))
+        plt.text(0.615, 0.02, stats_text, transform=ax.transAxes, fontsize=7.1,
+                verticalalignment='bottom', family='Arial',linespacing=1,
+                bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.7, pad=0.6))
         
         plt.subplots_adjust(left=0.08, bottom=0.08, right=0.75, top=0.86)
         plt.grid(True, alpha=0.5, linestyle='--')
         
         # Guardar mapa completo (con todos los elementos)
-        out_path_completo = images_dir / "mapa_calor_genero_cali.png"
-        plt.savefig(out_path_completo, dpi=300, bbox_inches='tight')
-        print(f"  ✓ Mapa completo guardado: {out_path_completo.name}")
+        out_path_completo = images_dir / "mapa_calor_genero_cali.pdf"
+        plt.savefig(out_path_completo, format='pdf', bbox_inches='tight')
+        print(f" Mapa completo guardado: {out_path_completo.name}")
         
         #plt.show()
     
@@ -1346,7 +1345,7 @@ class GeoreferenciaMapa:
 
 if __name__ == "__main__":
     import json
-    
+
     # Cargar configuración
     resultados_dir = Path(__file__).resolve().parent / "optimizacion_celda"
 
@@ -1354,7 +1353,6 @@ if __name__ == "__main__":
         config = json.load(f)
         mejorcelda = config['recomendacion']
         mejor_metodo_nombre = config['mejor_metodo']
-    
 
     print(f"\nMejor tamaño de celda: {mejorcelda} m")
     print(f"Método ganador: {mejor_metodo_nombre}")
@@ -1388,11 +1386,6 @@ if __name__ == "__main__":
     mapa = GeoreferenciaMapa(archivos_especificos, PESOS_DELITOS, mejorcelda, bbox=BBOX)
     mapa.ejecutar_pipeline_completo()
 
-
-    print(f"\n{'='*80}")
-    print(f"EXPORT GEOREFERENCIA GRID TO GEOJSON")
-    print(f"{'='*80}")
-
     # Exportar grid_cali a GeoJSON
     output_path = Path("images") / "grid_cali.geojson"
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1403,12 +1396,10 @@ if __name__ == "__main__":
     print(f"Saving grid_cali ({len(mapa.grid_cali)} cells) to: {output_path}")
 
     # Exportar a GeoJSON usando método manual (evitar problemas con pyogrio)
-    import json
     geojson_data = mapa.grid_cali.__geo_interface__
     with open(output_path, 'w', encoding='utf-8') as f:
         json.dump(geojson_data, f, ensure_ascii=False, indent=2)
 
-    print(f"✓ Success! Grid exported to: {output_path}")
     print(f"\nGrid properties:")
     print(f"  - Total cells: {len(mapa.grid_cali)}")
     print(f"  - Insecurity index range: 0-100")

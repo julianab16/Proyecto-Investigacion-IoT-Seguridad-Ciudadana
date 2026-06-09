@@ -6,9 +6,6 @@ from shapely.geometry import Point
 
 # ========== CONFIGURACIÓN ==========
 N = 1000  # Número de nodos
-print("=" * 70)
-print(" " * 15 + "GENERACIÓN DE NODOS IoT EN CALI")
-print("=" * 70)
 
 # ========== CARGA DEL MAPA DE CALI ==========
 print(f"\n[1/4] Cargando mapa de Santiago de Cali...")
@@ -17,11 +14,8 @@ cali_proj = cali.to_crs(3116)  # EPSG:3116 - MAGNA-SIRGAS Colombia Bogotá
 
 # Obtener límites
 xmin, ymin, xmax, ymax = cali_proj.total_bounds
-print(f"✓ Mapa cargado")
-print(f"  📍 Límites: X=[{xmin:,.0f}, {xmax:,.0f}] m, Y=[{ymin:,.0f}, {ymax:,.0f}] m")
 
 # ========== GENERACIÓN DE NODOS ==========
-print(f"\n[2/4] Generando {N} nodos dentro de Cali...")
 nodos_coords = []
 intentos = 0
 max_intentos = N * 100
@@ -41,7 +35,6 @@ while len(nodos_coords) < N and intentos < max_intentos:
 print(f"✓ {len(nodos_coords)} nodos generados")
 
 # ========== CREAR DATAFRAME ==========
-print(f"\n[3/4] Creando DataFrame...")
 nodos = pd.DataFrame({
     "ID": np.arange(1, len(nodos_coords) + 1),
     "X_m": [coord[0] for coord in nodos_coords],

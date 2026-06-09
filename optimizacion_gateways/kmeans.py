@@ -388,10 +388,7 @@ class LoRaWISEPOptimization:
 
 
 if __name__ == "__main__":
-    print("\n" + "="*60)
-    print("     LoRaWISEP - SISTEMA DE OPTIMIZACIÓN DE GATEWAYS")
-    print("="*60 + "\n")
-    
+
     # 1. CARGAR DATOS DESDE CSV
     import pandas as pd
     

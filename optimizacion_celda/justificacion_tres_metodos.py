@@ -618,3 +618,108 @@ print(f"📊 Score de función objetivo: {mejor_metodo[1]['score']:.6f}")
 print(f"\nLos tres metodos convergieron con variacion de {(h_std/h_promedio)*100:.1f}%,")
 print(f"pero {mejor_metodo[0]} obtuvo el mejor balance multi-criterio.")
 print("=" * 80)
+
+
+# ========== GRAFICA COMBINADA 2x2 ==========
+textwidth_pt = 472.03123
+fig_width_in = textwidth_pt / 72.27       # 6.531 in
+fig_height_in = fig_width_in * 0.8        # ≈ 5.2 in
+fig_combinada, axes_4 = plt.subplots(2, 2, figsize=(fig_width_in+1, fig_height_in))
+
+plt.rcParams['font.family'] = 'Arial'
+plt.rcParams['font.size'] = 9            # base
+
+# Definir los 4 subplots
+ax_cv_c, ax_even_c = axes_4[0, 0], axes_4[0, 1]
+ax_vac_c, ax_var_c = axes_4[1, 0], axes_4[1, 1]
+
+# ──────────────────────────────────────────────────────────────────────
+# SUBPLOT 1 (arriba izquierda): COEFFICIENT OF VARIATION
+# ──────────────────────────────────────────────────────────────────────
+ax_cv_c.plot(df_resultados['h'], df_resultados['cv'], 
+           'o-', linewidth=1, markersize=5, color='#6A4C93', label='CV', zorder=3)
+
+for metodo, h_valor in valores_optimos.items():
+    ax_cv_c.axvline(x=h_valor, color=colores_metodos[metodo], linestyle=estilos_linea[metodo],
+                  linewidth=1, label=f'{metodo} ({h_valor:.0f}m)', alpha=0.6, zorder=4)
+
+ax_cv_c.axvspan(50, limite_ruido, alpha=0.08, color=color_ruido, zorder=1)
+ax_cv_c.axvspan(limite_ruido, limite_sobreagregacion, alpha=0.08, color=color_optimo, zorder=1)
+ax_cv_c.axvspan(limite_sobreagregacion, 250, alpha=0.08, color=color_sobreagregacion, zorder=1)
+
+ax_cv_c.set_xlabel('Cell size (m)', fontsize=9)
+ax_cv_c.set_ylabel('Coefficient of variation (CV)', fontsize=9)
+ax_cv_c.legend(loc='best', fontsize=9, framealpha=0.9)
+ax_cv_c.tick_params(axis='both', labelsize=9)
+ax_cv_c.grid(True, alpha=0.3, linestyle='--', zorder=2)
+ax_cv_c.set_xlim(50, 250)
+
+# ──────────────────────────────────────────────────────────────────────
+# SUBPLOT 2 (arriba derecha): AVERAGE NUMBER OF EVENTS PER CELL
+# ──────────────────────────────────────────────────────────────────────
+ax_even_c.plot(df_resultados['h'], df_resultados['eventos_por_celda'], 
+             'o-', linewidth=1, markersize=5, color='#F18F01', label='Events/cell', zorder=3)
+
+for metodo, h_valor in valores_optimos.items():
+    ax_even_c.axvline(x=h_valor, color=colores_metodos[metodo], linestyle=estilos_linea[metodo],
+                    linewidth=1, label=f'{metodo} ({h_valor:.0f}m)', alpha=0.6, zorder=4)
+
+ax_even_c.axvspan(50, limite_ruido, alpha=0.08, color=color_ruido, zorder=1)
+ax_even_c.axvspan(limite_ruido, limite_sobreagregacion, alpha=0.08, color=color_optimo, zorder=1)
+ax_even_c.axvspan(limite_sobreagregacion, 250, alpha=0.08, color=color_sobreagregacion, zorder=1)
+
+ax_even_c.set_xlabel('Cell size (m)', fontsize=9)
+ax_even_c.set_ylabel('Average events per cell', fontsize=9)
+ax_even_c.legend(loc='best', fontsize=9, framealpha=0.9)
+ax_even_c.tick_params(axis='both', labelsize=9)
+ax_even_c.grid(True, alpha=0.3, linestyle='--', zorder=2)
+ax_even_c.set_xlim(50, 250)
+
+# ──────────────────────────────────────────────────────────────────────
+# SUBPLOT 3 (abajo izquierda): PERCENTAGE OF EMPTY CELLS
+# ──────────────────────────────────────────────────────────────────────
+ax_vac_c.plot(df_resultados['h'], df_resultados['pct_vacias'], 
+            'o-', linewidth=1, markersize=5, color='#A23B72', label='% Empty cells', zorder=3)
+
+for metodo, h_valor in valores_optimos.items():
+    ax_vac_c.axvline(x=h_valor, color=colores_metodos[metodo], linestyle=estilos_linea[metodo],
+                   linewidth=1, label=f'{metodo} ({h_valor:.0f}m)', alpha=0.6, zorder=4)
+
+ax_vac_c.axvspan(50, limite_ruido, alpha=0.08, color=color_ruido, zorder=1)
+ax_vac_c.axvspan(limite_ruido, limite_sobreagregacion, alpha=0.08, color=color_optimo, zorder=1)
+ax_vac_c.axvspan(limite_sobreagregacion, 250, alpha=0.08, color=color_sobreagregacion, zorder=1)
+
+ax_vac_c.set_xlabel('Cell size (m)', fontsize=9)
+ax_vac_c.set_ylabel('Cells without records (%)', fontsize=9)
+ax_vac_c.legend(loc='best', fontsize=9, framealpha=0.9)
+ax_vac_c.tick_params(axis='both', labelsize=9)
+ax_vac_c.grid(True, alpha=0.3, linestyle='--', zorder=2)
+ax_vac_c.set_xlim(50, 250)
+
+# ──────────────────────────────────────────────────────────────────────
+# SUBPLOT 4 (abajo derecha): DENSITY VARIANCE
+# ──────────────────────────────────────────────────────────────────────
+ax_var_c.plot(df_resultados['h'], df_resultados['varianza'], 
+            'o-', linewidth=1, markersize=5, color='#2E86AB', label='Variance', zorder=3)
+
+for metodo, h_valor in valores_optimos.items():
+    ax_var_c.axvline(x=h_valor, color=colores_metodos[metodo], linestyle=estilos_linea[metodo], 
+                   linewidth=1, label=f'{metodo} ({h_valor:.0f}m)', alpha=0.6, zorder=4)
+
+ax_var_c.axvspan(50, limite_ruido, alpha=0.08, color=color_ruido, zorder=1)
+ax_var_c.axvspan(limite_ruido, limite_sobreagregacion, alpha=0.08, color=color_optimo, zorder=1)
+ax_var_c.axvspan(limite_sobreagregacion, 250, alpha=0.08, color=color_sobreagregacion, zorder=1)
+
+ax_var_c.set_xlabel('Cell size (m)', fontsize=9)
+ax_var_c.set_ylabel('Variance (events²/km⁴)', fontsize=9)
+ax_var_c.legend(loc='best', fontsize=9, framealpha=0.9)
+ax_var_c.tick_params(axis='both', labelsize=9)
+ax_var_c.grid(True, alpha=0.3, linestyle='--', zorder=2)
+ax_var_c.set_xlim(50, 250)
+
+# Ajustar espaciado
+fig_combinada.tight_layout()
+# Guardar figura combinada
+output_combinada = resultados_dir / "metricas_combinadas_2x2.pdf"
+fig_combinada.savefig(output_combinada, format='pdf', bbox_inches='tight')
+plt.close(fig_combinada)

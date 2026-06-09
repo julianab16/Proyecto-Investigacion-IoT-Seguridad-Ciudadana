@@ -648,10 +648,6 @@ class LoRaWISEPGAElbow:
 if __name__ == "__main__":
     import pandas as pd
     
-    print("\n" + "="*80)
-    print("  LoRaWISEP-GA: OPTIMIZACIÓN AUTOMÁTICA DE GATEWAYS")
-    print("="*80 + "\n")
-    
     # Cargar datos
     try:
         nodos = pd.read_csv("nodos_iot.csv")

@@ -56,7 +56,6 @@ def gap_statistics_kmeans(data, nrefs, maxClusters):
     s_errors = np.zeros(actual_max_k)
     std_j = np.zeros(actual_max_k)
 
-
     # Factor constante para s(k)
     gaps_sks = np.zeros(maxClusters)
 
