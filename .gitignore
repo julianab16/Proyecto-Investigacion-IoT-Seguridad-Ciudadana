@@ -9,8 +9,10 @@ __pycache__/
 *.pkl
 dist/
 build/
+env/
 .eggs/
 .venv/
+.env/
 pipeline/
 data_base/
 cache/
