@@ -5,6 +5,8 @@ import numpy as np
 import pandas as pd
 from shapely.geometry import Point, Polygon, box
 import math
+import matplotlib
+matplotlib.use('Agg') 
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 from pathlib import Path
@@ -14,7 +16,7 @@ from libpysal.weights import KNN
 from matplotlib.patches import Rectangle
 
 class GeoreferenciaMapa:
-    def __init__(self, archivos_especificos, PESOS_DELITOS, mejorcelda, bbox):
+    def __init__(self, archivos_especificos, PESOS_DELITOS, mejorcelda, bbox=None):
         """
         Inicializa la clase de georeferenciación
         
@@ -98,6 +100,9 @@ class GeoreferenciaMapa:
             bbox_polygon = box(minx, miny, maxx, maxy)
             bbox_gdf = gpd.GeoDataFrame([1], geometry=[bbox_polygon], crs="EPSG:3116")
             self.cali = gpd.overlay(self.cali, bbox_gdf, how='intersection')
+        
+        # Mostrar límites numéricos
+        xmin, ymin, xmax, ymax = self.cali.total_bounds
         
         # Calcular e imprimir el área de Cali
         area_m2 = self.cali.geometry.area.sum()
