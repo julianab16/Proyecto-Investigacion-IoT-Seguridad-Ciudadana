@@ -36,15 +36,22 @@ def gap_statistics_fuzzy(data, nrefs, AREA_SIZE):
     std_j = np.zeros(maxClusters)
     gaps_sks = np.zeros(maxClusters)
 
+    data_min = data.min(axis=0)
+    data_max = data.max(axis=0)
+    rng = np.random.default_rng(42)
 
+    # Para cada número de clusters k (asegurar k <= n_samples para K-Means)
     for idx, c in enumerate(n_clusters_range):
-        # Array para almacenar los log(J*_jb) de las B referencias
+        # --- 1. Generar B referencias aleatorias y calcular sus inertias ---
         log_refs = np.zeros(nrefs)
-        
-        # Generar y procesar cada conjunto de referencia
+
         for i in range(nrefs):
 
-            random_ref = np.random.uniform(low=0, high=AREA_SIZE, size=data.shape)
+            random_ref = rng.uniform(
+                low=data_min,
+                high=data_max,
+                size=data.shape
+            )
 
             # Calcular FCM sobre referencia (transponer para cmeans)
             _, _, _, _, jm, _, _ = cmeans_with_sensitivity(

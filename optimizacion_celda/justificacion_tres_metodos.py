@@ -1,24 +1,17 @@
 import osmnx as ox
 import geopandas as gpd
 import numpy as np
+import matplotlib
+matplotlib.use('Agg') 
 import matplotlib.pyplot as plt
 from shapely.geometry import box
 import pandas as pd
 import warnings
-import os
 import json
 from pathlib import Path
 
 warnings.filterwarnings('ignore')
 
-plt.rcParams.update({
-    'font.size': 14,
-    'axes.labelsize': 14,
-    'axes.titlesize': 14,
-    'legend.fontsize': 14,
-    'xtick.labelsize': 14,
-    'ytick.labelsize': 14
-})
 
 print("=" * 80)
 print(" " * 10 + "JUSTIFICACION DEL TAMANO OPTIMO - COMPARACION DE 3 METODOS")
@@ -80,13 +73,11 @@ print(f"[OK] Total combinado: {len(df):,} registros")
 
 # ========== CARGAR MAPA DE CALI ==========
 print("\n[2/5] Cargando limites de Cali...")
-cali = ox.geocode_to_gdf("Santiago de Cali, Colombia")
+cali = ox.geocode_to_gdf("Santiago de Cali, Colombia", which_result=2)
 cali = cali.to_crs(3116)
 
-try:
-    area_cali = cali.geometry.union_all()
-except AttributeError:
-    area_cali = cali.geometry.unary_union
+area_cali = cali.geometry.union_all()
+
 
 print("[OK] Mapa de Cali cargado")
 
@@ -282,188 +273,188 @@ limite_ruido = h_min_optimo - 10
 limite_sobreagregacion = h_max_optimo + 5
 
 
-# ========== GRAFICA INDIVIDUAL: FUNCION OBJETIVO ==========
-print("\n[Adicional] Generando grafica individual de Funcion Objetivo...")
+# # ========== GRAFICA INDIVIDUAL: FUNCION OBJETIVO ==========
+# print("\n[Adicional] Generando grafica individual de Funcion Objetivo...")
 
-fig_obj, ax_obj_ind = plt.subplots(figsize=(18, 9))
+# fig_obj, ax_obj_ind = plt.subplots(figsize=(18, 9))
 
-# Graficar funcion objetivo
-ax_obj_ind.plot(df_resultados['h'], df_resultados['funcion_objetivo'], 
-                'o-', linewidth=4, markersize=8, color='#1a1a2e', label='Objective Function', zorder=3)
+# # Graficar funcion objetivo
+# ax_obj_ind.plot(df_resultados['h'], df_resultados['funcion_objetivo'], 
+#                 'o-', linewidth=4, markersize=8, color='#1a1a2e', label='Objective Function', zorder=3)
 
-# Marcar los tres valores optimos con sus scores
-for metodo, info in scores_metodos.items():
-    ax_obj_ind.plot(info['h'], info['score'], 
-                    'o', markersize=15, color=colores_metodos[metodo], 
-                    markeredgecolor='black', markeredgewidth=2, zorder=5)
+# # Marcar los tres valores optimos con sus scores
+# for metodo, info in scores_metodos.items():
+#     ax_obj_ind.plot(info['h'], info['score'], 
+#                     'o', markersize=15, color=colores_metodos[metodo], 
+#                     markeredgecolor='black', markeredgewidth=2, zorder=5)
 
-# Destacar el mejor metodo con estrella
-ax_obj_ind.plot(h_optimo_calculado, mejor_metodo[1]['score'],
-                'r*', markersize=22, label=f'BEST: {mejor_metodo[0]} ({h_optimo_calculado:.0f}m)', 
-                zorder=6, markeredgecolor='darkred', markeredgewidth=1.5)
+# # Destacar el mejor metodo con estrella
+# ax_obj_ind.plot(h_optimo_calculado, mejor_metodo[1]['score'],
+#                 'r*', markersize=22, label=f'BEST: {mejor_metodo[0]} ({h_optimo_calculado:.0f}m)', 
+#                 zorder=6, markeredgecolor='darkred', markeredgewidth=1.5)
 
-# Lineas verticales para cada metodo de optimizacion
-for metodo, h_valor in valores_optimos.items():
-    estilo = '-' if metodo == mejor_metodo[0] else estilos_linea[metodo]
-    ancho = 3.5 if metodo == mejor_metodo[0] else 2.5
-    ax_obj_ind.axvline(x=h_valor, color=colores_metodos[metodo], linestyle=estilo, 
-                       linewidth=ancho, label=f'{metodo} ({h_valor:.0f}m)', alpha=0.8, zorder=4)
+# # Lineas verticales para cada metodo de optimizacion
+# for metodo, h_valor in valores_optimos.items():
+#     estilo = '-' if metodo == mejor_metodo[0] else estilos_linea[metodo]
+#     ancho = 3.5 if metodo == mejor_metodo[0] else 2.5
+#     ax_obj_ind.axvline(x=h_valor, color=colores_metodos[metodo], linestyle=estilo, 
+#                        linewidth=ancho, label=f'{metodo} ({h_valor:.0f}m)', alpha=0.8, zorder=4)
 
-# Zonas de fondo
-ax_obj_ind.axvspan(50, limite_ruido, alpha=0.2, color=color_ruido, zorder=1)
-ax_obj_ind.axvspan(limite_ruido, limite_sobreagregacion, alpha=0.2, color=color_optimo, zorder=1)
-ax_obj_ind.axvspan(limite_sobreagregacion, 250, alpha=0.2, color=color_sobreagregacion, zorder=1)
+# # Zonas de fondo
+# ax_obj_ind.axvspan(50, limite_ruido, alpha=0.2, color=color_ruido, zorder=1)
+# ax_obj_ind.axvspan(limite_ruido, limite_sobreagregacion, alpha=0.2, color=color_optimo, zorder=1)
+# ax_obj_ind.axvspan(limite_sobreagregacion, 250, alpha=0.2, color=color_sobreagregacion, zorder=1)
 
-ax_obj_ind.set_xlabel('Cell size (m)', fontsize=14, weight='bold')
-ax_obj_ind.set_ylabel('Objective Function', fontsize=14, weight='bold')
-ax_obj_ind.set_title('')
-ax_obj_ind.legend(loc='upper right', fontsize=14, framealpha=0.95, ncol=2)
-ax_obj_ind.grid(True, alpha=0.4, linestyle='--', zorder=2)
-ax_obj_ind.set_xlim(50, 250)
+# ax_obj_ind.set_xlabel('Cell size (m)', fontsize=14, weight='bold')
+# ax_obj_ind.set_ylabel('Objective Function', fontsize=14, weight='bold')
+# ax_obj_ind.set_title('')
+# ax_obj_ind.legend(loc='upper right', fontsize=14, framealpha=0.95, ncol=2)
+# ax_obj_ind.grid(True, alpha=0.4, linestyle='--', zorder=2)
+# ax_obj_ind.set_xlim(50, 250)
 
-# Anotaciones
-ax_obj_ind.annotate(f'WINNER: {mejor_metodo[0]}\n(Lower Score)', 
-                    xy=(h_optimo_calculado, mejor_metodo[1]['score']),
-                    xytext=(h_optimo_calculado + 10, mejor_metodo[1]['score'] + 0.12),
-                    fontsize=14, weight='bold', color='darkred',
-                    bbox=dict(boxstyle='round,pad=0.8', facecolor='yellow', alpha=0.85, edgecolor='darkred', linewidth=2),
-                    arrowprops=dict(arrowstyle='->', color='darkred', lw=3))
+# # Anotaciones
+# ax_obj_ind.annotate(f'WINNER: {mejor_metodo[0]}\n(Lower Score)', 
+#                     xy=(h_optimo_calculado, mejor_metodo[1]['score']),
+#                     xytext=(h_optimo_calculado + 10, mejor_metodo[1]['score'] + 0.12),
+#                     fontsize=14, weight='bold', color='darkred',
+#                     bbox=dict(boxstyle='round,pad=0.8', facecolor='yellow', alpha=0.85, edgecolor='darkred', linewidth=2),
+#                     arrowprops=dict(arrowstyle='->', color='darkred', lw=3))
 
-# Guardar figura individual
-output_funcion_obj = resultados_dir / "funcion_objetivo_individual.png"
-fig_obj.savefig(output_funcion_obj, dpi=300, bbox_inches='tight', facecolor='white')
-print(f"[OK] Grafica de funcion objetivo guardada en: {output_funcion_obj}")
-plt.close(fig_obj)
+# # Guardar figura individual
+# output_funcion_obj = resultados_dir / "funcion_objetivo_individual.png"
+# fig_obj.savefig(output_funcion_obj, dpi=300, bbox_inches='tight', facecolor='white')
+# print(f"[OK] Grafica de funcion objetivo guardada en: {output_funcion_obj}")
+# plt.close(fig_obj)
 
-# ========== GRAFICA INDIVIDUAL: VARIANZA ==========
-print("[Adicional] Generando grafica individual de Varianza...")
+# # ========== GRAFICA INDIVIDUAL: VARIANZA ==========
+# print("[Adicional] Generando grafica individual de Varianza...")
 
-fig_varianza, ax_var = plt.subplots(figsize=(12, 8))
+# fig_varianza, ax_var = plt.subplots(figsize=(12, 8))
 
-# Graficar varianza
-ax_var.plot(df_resultados['h'], df_resultados['varianza'], 
-            'o-', linewidth=3, markersize=6, color='#2E86AB', label='Varianza', zorder=3)
+# # Graficar varianza
+# ax_var.plot(df_resultados['h'], df_resultados['varianza'], 
+#             'o-', linewidth=3, markersize=6, color='#2E86AB', label='Varianza', zorder=3)
 
-# Lineas verticales para cada metodo
-for metodo, h_valor in valores_optimos.items():
-    ax_var.axvline(x=h_valor, color=colores_metodos[metodo], linestyle=estilos_linea[metodo], 
-                   linewidth=2.5, label=f'{metodo} ({h_valor:.0f}m)', alpha=0.8, zorder=4)
+# # Lineas verticales para cada metodo
+# for metodo, h_valor in valores_optimos.items():
+#     ax_var.axvline(x=h_valor, color=colores_metodos[metodo], linestyle=estilos_linea[metodo], 
+#                    linewidth=2.5, label=f'{metodo} ({h_valor:.0f}m)', alpha=0.8, zorder=4)
 
-# Zonas de fondo
-ax_var.axvspan(50, limite_ruido, alpha=0.15, color=color_ruido, zorder=1)
-ax_var.axvspan(limite_ruido, limite_sobreagregacion, alpha=0.15, color=color_optimo, zorder=1)
-ax_var.axvspan(limite_sobreagregacion, 250, alpha=0.15, color=color_sobreagregacion, zorder=1)
+# # Zonas de fondo
+# ax_var.axvspan(50, limite_ruido, alpha=0.15, color=color_ruido, zorder=1)
+# ax_var.axvspan(limite_ruido, limite_sobreagregacion, alpha=0.15, color=color_optimo, zorder=1)
+# ax_var.axvspan(limite_sobreagregacion, 250, alpha=0.15, color=color_sobreagregacion, zorder=1)
 
-ax_var.set_xlabel('Cell size (m)', fontsize=14, weight='bold')
-ax_var.set_ylabel('Variance (events²/km⁴)', fontsize=14, weight='bold')
-ax_var.set_title('')
-ax_var.legend(loc='best', fontsize=14, framealpha=0.95)
-ax_var.grid(True, alpha=0.3, linestyle='--', zorder=2)
-ax_var.set_xlim(50, 250)
+# ax_var.set_xlabel('Cell size (m)', fontsize=14, weight='bold')
+# ax_var.set_ylabel('Variance (events²/km⁴)', fontsize=14, weight='bold')
+# ax_var.set_title('')
+# ax_var.legend(loc='best', fontsize=14, framealpha=0.95)
+# ax_var.grid(True, alpha=0.3, linestyle='--', zorder=2)
+# ax_var.set_xlim(50, 250)
 
-# Guardar figura individual
-output_varianza = resultados_dir / "varianza_individual.png"
-fig_varianza.savefig(output_varianza, dpi=300, bbox_inches='tight', facecolor='white')
-print(f"[OK] Grafica de varianza guardada en: {output_varianza}")
-plt.close(fig_varianza)
+# # Guardar figura individual
+# output_varianza = resultados_dir / "varianza_individual.png"
+# fig_varianza.savefig(output_varianza, dpi=300, bbox_inches='tight', facecolor='white')
+# print(f"[OK] Grafica de varianza guardada en: {output_varianza}")
+# plt.close(fig_varianza)
 
-# ========== GRAFICA INDIVIDUAL: PORCENTAJE DE CELDAS VACIAS ==========
-print("[Adicional] Generando grafica individual de Porcentaje de celdas vacias...")
+# # ========== GRAFICA INDIVIDUAL: PORCENTAJE DE CELDAS VACIAS ==========
+# print("[Adicional] Generando grafica individual de Porcentaje de celdas vacias...")
 
-fig_vacias, ax_vac = plt.subplots(figsize=(12, 8))
+# fig_vacias, ax_vac = plt.subplots(figsize=(12, 8))
 
-# Graficar porcentaje de celdas vacias
-ax_vac.plot(df_resultados['h'], df_resultados['pct_vacias'], 
-            'o-', linewidth=3, markersize=6, color='#A23B72', label='% Empty cells', zorder=3)
+# # Graficar porcentaje de celdas vacias
+# ax_vac.plot(df_resultados['h'], df_resultados['pct_vacias'], 
+#             'o-', linewidth=3, markersize=6, color='#A23B72', label='% Empty cells', zorder=3)
 
-# Lineas verticales para cada metodo
-for metodo, h_valor in valores_optimos.items():
-    ax_vac.axvline(x=h_valor, color=colores_metodos[metodo], linestyle=estilos_linea[metodo],
-                   linewidth=2.5, label=f'{metodo} ({h_valor:.0f}m)', alpha=0.8, zorder=4)
+# # Lineas verticales para cada metodo
+# for metodo, h_valor in valores_optimos.items():
+#     ax_vac.axvline(x=h_valor, color=colores_metodos[metodo], linestyle=estilos_linea[metodo],
+#                    linewidth=2.5, label=f'{metodo} ({h_valor:.0f}m)', alpha=0.8, zorder=4)
 
-# Linea de umbral critico
-ax_vac.axhline(y=50, color='orange', linestyle=':', linewidth=2, 
-               alpha=0.7, label='Critical threshold (50%)', zorder=3)
+# # Linea de umbral critico
+# ax_vac.axhline(y=50, color='orange', linestyle=':', linewidth=2, 
+#                alpha=0.7, label='Critical threshold (50%)', zorder=3)
 
-# Zonas de fondo
-ax_vac.axvspan(50, limite_ruido, alpha=0.15, color=color_ruido, zorder=1)
-ax_vac.axvspan(limite_ruido, limite_sobreagregacion, alpha=0.15, color=color_optimo, zorder=1)
-ax_vac.axvspan(limite_sobreagregacion, 250, alpha=0.15, color=color_sobreagregacion, zorder=1)
+# # Zonas de fondo
+# ax_vac.axvspan(50, limite_ruido, alpha=0.15, color=color_ruido, zorder=1)
+# ax_vac.axvspan(limite_ruido, limite_sobreagregacion, alpha=0.15, color=color_optimo, zorder=1)
+# ax_vac.axvspan(limite_sobreagregacion, 250, alpha=0.15, color=color_sobreagregacion, zorder=1)
 
-ax_vac.set_xlabel('Cell size (m)', fontsize=14, weight='bold')
-ax_vac.set_ylabel('Cells without records (%)', fontsize=14, weight='bold')
-ax_vac.legend(loc='best', fontsize=14, framealpha=0.95)
-ax_vac.grid(True, alpha=0.3, linestyle='--', zorder=2)
-ax_vac.set_xlim(50, 250)
+# ax_vac.set_xlabel('Cell size (m)', fontsize=14, weight='bold')
+# ax_vac.set_ylabel('Cells without records (%)', fontsize=14, weight='bold')
+# ax_vac.legend(loc='best', fontsize=14, framealpha=0.95)
+# ax_vac.grid(True, alpha=0.3, linestyle='--', zorder=2)
+# ax_vac.set_xlim(50, 250)
 
-# Guardar figura individual
-output_vacias = resultados_dir / "celdas_eventos_individual.png"
-fig_vacias.savefig(output_vacias, dpi=300, bbox_inches='tight', facecolor='white')
-print(f"[OK] Grafica de celdas vacias guardada en: {output_vacias}")
-plt.close(fig_vacias)
+# # Guardar figura individual
+# output_vacias = resultados_dir / "celdas_eventos_individual.png"
+# fig_vacias.savefig(output_vacias, dpi=300, bbox_inches='tight', facecolor='white')
+# print(f"[OK] Grafica de celdas vacias guardada en: {output_vacias}")
+# plt.close(fig_vacias)
 
 
 
-# ========== SUBPLOT 3: Eventos por celda ==========
-fig_eventos, ax_even = plt.subplots(figsize=(12, 8))
+# # ========== SUBPLOT 3: Eventos por celda ==========
+# fig_eventos, ax_even = plt.subplots(figsize=(12, 8))
 
-ax_even.plot(df_resultados['h'], df_resultados['eventos_por_celda'], 
-         'o-', linewidth=3, markersize=6, color='#F18F01', label='Events/cell', zorder=3)
+# ax_even.plot(df_resultados['h'], df_resultados['eventos_por_celda'], 
+#          'o-', linewidth=3, markersize=6, color='#F18F01', label='Events/cell', zorder=3)
 
-# Lineas verticales para cada metodo
-for metodo, h_valor in valores_optimos.items():
-    ax_even.axvline(x=h_valor, color=colores_metodos[metodo], linestyle=estilos_linea[metodo],
-                linewidth=2.5, label=f'{metodo} ({h_valor:.0f}m)', alpha=0.8, zorder=4)
+# # Lineas verticales para cada metodo
+# for metodo, h_valor in valores_optimos.items():
+#     ax_even.axvline(x=h_valor, color=colores_metodos[metodo], linestyle=estilos_linea[metodo],
+#                 linewidth=2.5, label=f'{metodo} ({h_valor:.0f}m)', alpha=0.8, zorder=4)
 
-# Zonas de fondo
-ax_even.axvspan(50, limite_ruido, alpha=0.15, color=color_ruido, zorder=1)
-ax_even.axvspan(limite_ruido, limite_sobreagregacion, alpha=0.15, color=color_optimo, zorder=1)
-ax_even.axvspan(limite_sobreagregacion, 250, alpha=0.15, color=color_sobreagregacion, zorder=1)
+# # Zonas de fondo
+# ax_even.axvspan(50, limite_ruido, alpha=0.15, color=color_ruido, zorder=1)
+# ax_even.axvspan(limite_ruido, limite_sobreagregacion, alpha=0.15, color=color_optimo, zorder=1)
+# ax_even.axvspan(limite_sobreagregacion, 250, alpha=0.15, color=color_sobreagregacion, zorder=1)
 
-ax_even.set_xlabel('Cell size (m)', fontsize=14, weight='bold')
-ax_even.set_ylabel('Average events per cell', fontsize=14, weight='bold')
-ax_even.set_title('')
-ax_even.legend(loc='best', fontsize=14, framealpha=0.95)
-ax_even.grid(True, alpha=0.3, linestyle='--', zorder=2)
-ax_even.set_xlim(50, 250)
+# ax_even.set_xlabel('Cell size (m)', fontsize=14, weight='bold')
+# ax_even.set_ylabel('Average events per cell', fontsize=14, weight='bold')
+# ax_even.set_title('')
+# ax_even.legend(loc='best', fontsize=14, framealpha=0.95)
+# ax_even.grid(True, alpha=0.3, linestyle='--', zorder=2)
+# ax_even.set_xlim(50, 250)
 
-# Guardar figura individual
-output_eventos = resultados_dir / "eventos_celda_individual.png"
-fig_eventos.savefig(output_eventos, dpi=300, bbox_inches='tight', facecolor='white')
-print(f"[OK] Grafica de eventos por celda guardada en: {output_eventos}")
-plt.close(fig_eventos)
+# # Guardar figura individual
+# output_eventos = resultados_dir / "eventos_celda_individual.png"
+# fig_eventos.savefig(output_eventos, dpi=300, bbox_inches='tight', facecolor='white')
+# print(f"[OK] Grafica de eventos por celda guardada en: {output_eventos}")
+# plt.close(fig_eventos)
 
-# ========== GRAFICA INDIVIDUAL: COEFICIENTE DE VARIACION ==========
-print("[Adicional] Generando grafica individual de Coeficiente de variacion...")
+# # ========== GRAFICA INDIVIDUAL: COEFICIENTE DE VARIACION ==========
+# print("[Adicional] Generando grafica individual de Coeficiente de variacion...")
 
-fig_cv, ax_cv = plt.subplots(figsize=(12, 8))
+# fig_cv, ax_cv = plt.subplots(figsize=(12, 8))
 
-# Graficar coeficiente de variacion
-ax_cv.plot(df_resultados['h'], df_resultados['cv'], 
-           'o-', linewidth=3, markersize=6, color='#6A4C93', label='CV', zorder=3)
+# # Graficar coeficiente de variacion
+# ax_cv.plot(df_resultados['h'], df_resultados['cv'], 
+#            'o-', linewidth=3, markersize=6, color='#6A4C93', label='CV', zorder=3)
 
-# Lineas verticales para cada metodo
-for metodo, h_valor in valores_optimos.items():
-    ax_cv.axvline(x=h_valor, color=colores_metodos[metodo], linestyle=estilos_linea[metodo],
-                  linewidth=2.5, label=f'{metodo} ({h_valor:.0f}m)', alpha=0.8, zorder=4)
+# # Lineas verticales para cada metodo
+# for metodo, h_valor in valores_optimos.items():
+#     ax_cv.axvline(x=h_valor, color=colores_metodos[metodo], linestyle=estilos_linea[metodo],
+#                   linewidth=2.5, label=f'{metodo} ({h_valor:.0f}m)', alpha=0.8, zorder=4)
 
-# Zonas de fondo
-ax_cv.axvspan(50, limite_ruido, alpha=0.15, color=color_ruido, zorder=1)
-ax_cv.axvspan(limite_ruido, limite_sobreagregacion, alpha=0.15, color=color_optimo, zorder=1)
-ax_cv.axvspan(limite_sobreagregacion, 250, alpha=0.15, color=color_sobreagregacion, zorder=1)
+# # Zonas de fondo
+# ax_cv.axvspan(50, limite_ruido, alpha=0.15, color=color_ruido, zorder=1)
+# ax_cv.axvspan(limite_ruido, limite_sobreagregacion, alpha=0.15, color=color_optimo, zorder=1)
+# ax_cv.axvspan(limite_sobreagregacion, 250, alpha=0.15, color=color_sobreagregacion, zorder=1)
 
-ax_cv.set_xlabel('Cell size (m)', fontsize=14, weight='bold')
-ax_cv.set_ylabel('Coefficient of variation (CV)', fontsize=14, weight='bold')
-ax_cv.set_title('')
-ax_cv.legend(loc='best', fontsize=14, framealpha=0.95)
-ax_cv.grid(True, alpha=0.3, linestyle='--', zorder=2)
-ax_cv.set_xlim(50, 250)
+# ax_cv.set_xlabel('Cell size (m)', fontsize=14, weight='bold')
+# ax_cv.set_ylabel('Coefficient of variation (CV)', fontsize=14, weight='bold')
+# ax_cv.set_title('')
+# ax_cv.legend(loc='best', fontsize=14, framealpha=0.95)
+# ax_cv.grid(True, alpha=0.3, linestyle='--', zorder=2)
+# ax_cv.set_xlim(50, 250)
 
-# Guardar figura individual
-output_cv = resultados_dir / "coeficiente_variacion_individual.png"
-fig_cv.savefig(output_cv, dpi=300, bbox_inches='tight', facecolor='white')
-print(f"[OK] Grafica de coeficiente de variacion guardada en: {output_cv}")
-plt.close(fig_cv)
+# # Guardar figura individual
+# output_cv = resultados_dir / "coeficiente_variacion_individual.png"
+# fig_cv.savefig(output_cv, dpi=300, bbox_inches='tight', facecolor='white')
+# print(f"[OK] Grafica de coeficiente de variacion guardada en: {output_cv}")
+# plt.close(fig_cv)
 
 
 
@@ -513,7 +504,7 @@ print(f"{'Posición':<12} {'Método':<25} {'h (m)':<12} {'Score':<15} {'Estado'}
 print("-" * 80)
 
 for i, (metodo, info) in enumerate(ranking, 1):
-    estado = "⭐ GANADOR" if i == 1 else f"#{i}"
+    estado = " GANADOR" if i == 1 else f"#{i}"
     print(f"{i:<12} {metodo:<25} {info['h']:>8.2f}    {info['score']:>12.6f}   {estado}")
 
 print("-" * 80)
@@ -540,46 +531,6 @@ for metodo, h_valor in valores_optimos.items():
     diff = h_valor - h_promedio
     diff_pct = (diff / h_promedio) * 100
     print(f"  {metodo:<20}: {diff:+6.2f} m ({diff_pct:+5.2f}%)")
-
-# ========== INTERPRETACION ==========
-print("\n" + "=" * 80)
-print("INTERPRETACION Y CONCLUSIONES")
-print("=" * 80)
-
-print(f"""
-CONVERGENCIA DE METODOS:
-Los tres metodos de optimizacion convergen a valores muy similares
-(rango de {h_rango:.2f}m, ~{(h_rango/h_promedio)*100:.1f}% de variacion), lo que valida
-la robustez del tamano optimo encontrado (~{h_promedio:.0f}m).
-
-JUSTIFICACION DEL RANGO OPTIMO ({limite_ruido:.0f}m - {limite_sobreagregacion:.0f}m):
-
-1. ZONA DE RUIDO (h < {limite_ruido:.0f}m):
-   - Alta varianza: Excesiva sensibilidad a variaciones locales
-   - Muchas celdas vacias: Fragmentacion espacial ({df_resultados[df_resultados['h']<limite_ruido]['pct_vacias'].mean():.1f}% promedio)
-   - Pocos eventos/celda: Insuficiente agregacion estadistica
-   - CV muy alto: Ruido estadistico domina sobre patrones reales
-
-2. ZONA OPTIMA ({limite_ruido:.0f}m - {limite_sobreagregacion:.0f}m):
-   - Varianza moderada: Balance entre detalle y estabilidad
-   - Celdas vacias controladas: Cobertura espacial adecuada
-   - Eventos/celda ideal: Cerca del rango optimo (8-12)
-   - CV en rango ideal: Permite detectar hotspots sin ruido excesivo
-   
-3. ZONA DE SOBREAGREGACION (h > {limite_sobreagregacion:.0f}m):
-   - Varianza muy baja: Perdida de patrones espaciales locales
-   - Pocas celdas vacias: Pero a costa de resolucion espacial
-   - Muchos eventos/celda: Excesiva agregacion difumina hotspots
-   - CV bajo: Insuficiente heterogeneidad espacial
-
-RECOMENDACION FINAL:
-Utilizar h = {h_promedio:.0f}m (promedio de los 3 metodos) como tamano
-optimo de celda, ya que representa el mejor balance entre preservar
-la heterogeneidad espacial necesaria para detectar hotspots y mantener
-estabilidad estadistica suficiente para analisis confiables.
-""")
-
-print("=" * 80)
 
 # ========== EXPORTAR RESULTADOS ==========
 print("\n[7/7] Exportando resultados...")
@@ -612,114 +563,95 @@ print(f"[OK] Resumen JSON: {output_json}")
 print("\n" + "=" * 80)
 print("PROCESO COMPLETADO")
 print("=" * 80)
-print(f"\n🏆 METODO GANADOR: {mejor_metodo[0]}")
-print(f"📏 TAMAÑO OPTIMO RECOMENDADO: {h_optimo_calculado:.2f} m")
-print(f"📊 Score de función objetivo: {mejor_metodo[1]['score']:.6f}")
-print(f"\nLos tres metodos convergieron con variacion de {(h_std/h_promedio)*100:.1f}%,")
-print(f"pero {mejor_metodo[0]} obtuvo el mejor balance multi-criterio.")
-print("=" * 80)
-
+print(f"\nMETODO GANADOR: {mejor_metodo[0]}")
+print(f" TAMAÑO OPTIMO RECOMENDADO: {h_optimo_calculado:.2f} m")
 
 # ========== GRAFICA COMBINADA 2x2 ==========
-textwidth_pt = 472.03123
-fig_width_in = textwidth_pt / 72.27       # 6.531 in
-fig_height_in = fig_width_in * 0.8        # ≈ 5.2 in
-fig_combinada, axes_4 = plt.subplots(2, 2, figsize=(fig_width_in+1, fig_height_in))
 
-plt.rcParams['font.family'] = 'Arial'
-plt.rcParams['font.size'] = 9            # base
+fig_width_in = 7.16   # dos columnas (o 3.5 para una)
+fig_height_in = fig_width_in * 0.65   # altura ajustada
 
-# Definir los 4 subplots
+# Compartir eje X para alinear y eliminar etiquetas redundantes
+fig_combinada, axes_4 = plt.subplots(2, 2, figsize=(fig_width_in, fig_height_in),
+                                     sharex=True, sharey=False)
+
 ax_cv_c, ax_even_c = axes_4[0, 0], axes_4[0, 1]
 ax_vac_c, ax_var_c = axes_4[1, 0], axes_4[1, 1]
 
-# ──────────────────────────────────────────────────────────────────────
-# SUBPLOT 1 (arriba izquierda): COEFFICIENT OF VARIATION
-# ──────────────────────────────────────────────────────────────────────
-ax_cv_c.plot(df_resultados['h'], df_resultados['cv'], 
-           'o-', linewidth=1, markersize=5, color='#6A4C93', label='CV', zorder=3)
+# ── Etiquetas de subfiguras centradas debajo ──
+for ax, label in zip([ax_cv_c, ax_even_c], ['(a)', '(b)']):
+    ax.text(0.5, -0.08, label, transform=ax.transAxes,
+            fontsize=8, fontname='Times New Roman', ha='center', va='center')
+    
+for ax, label in zip([ax_vac_c, ax_var_c], ['(c)', '(d)']):
+    ax.text(0.5, -0.24, label, transform=ax.transAxes,
+            fontsize=8, fontname='Times New Roman', ha='center', va='center')
 
+# ── Eliminar etiquetas del eje X en la fila superior ──
+for ax in [ax_cv_c, ax_even_c]:
+    ax.set_xlabel('')
+    ax.tick_params(axis='x', labelbottom=False)
+
+# ── Reducir espaciado entre subplots ──
+plt.subplots_adjust(hspace=0.05, wspace=0.06)
+
+# (El resto del código de cada subplot se mantiene igual, pero sin repetir set_xlabel en los superiores)
+# Ejemplo para el primero:
+ax_cv_c.plot(df_resultados['h'], df_resultados['cv'], 'o-', linewidth=1, markersize=5, color='#6A4C93', label='CV', zorder=3)
 for metodo, h_valor in valores_optimos.items():
-    ax_cv_c.axvline(x=h_valor, color=colores_metodos[metodo], linestyle=estilos_linea[metodo],
-                  linewidth=1, label=f'{metodo} ({h_valor:.0f}m)', alpha=0.6, zorder=4)
-
+    ax_cv_c.axvline(x=h_valor, color=colores_metodos[metodo], linestyle=estilos_linea[metodo], linewidth=1, label=f'{metodo} ({h_valor:.0f}m)', alpha=0.6, zorder=4)
 ax_cv_c.axvspan(50, limite_ruido, alpha=0.08, color=color_ruido, zorder=1)
 ax_cv_c.axvspan(limite_ruido, limite_sobreagregacion, alpha=0.08, color=color_optimo, zorder=1)
 ax_cv_c.axvspan(limite_sobreagregacion, 250, alpha=0.08, color=color_sobreagregacion, zorder=1)
-
-ax_cv_c.set_xlabel('Cell size (m)', fontsize=9)
-ax_cv_c.set_ylabel('Coefficient of variation (CV)', fontsize=9)
-ax_cv_c.legend(loc='best', fontsize=9, framealpha=0.9)
-ax_cv_c.tick_params(axis='both', labelsize=9)
+ax_cv_c.set_ylabel('Coefficient of variation (CV)', fontsize=8)
+ax_cv_c.legend(loc='best', fontsize=8, framealpha=0.9)
+ax_cv_c.tick_params(axis='both', labelsize=8)
 ax_cv_c.grid(True, alpha=0.3, linestyle='--', zorder=2)
 ax_cv_c.set_xlim(50, 250)
 
-# ──────────────────────────────────────────────────────────────────────
-# SUBPLOT 2 (arriba derecha): AVERAGE NUMBER OF EVENTS PER CELL
-# ──────────────────────────────────────────────────────────────────────
-ax_even_c.plot(df_resultados['h'], df_resultados['eventos_por_celda'], 
-             'o-', linewidth=1, markersize=5, color='#F18F01', label='Events/cell', zorder=3)
-
+# Subplot 2 (arriba derecha)
+ax_even_c.plot(df_resultados['h'], df_resultados['eventos_por_celda'], 'o-', linewidth=1, markersize=5, color='#F18F01', label='Events/cell', zorder=3)
 for metodo, h_valor in valores_optimos.items():
-    ax_even_c.axvline(x=h_valor, color=colores_metodos[metodo], linestyle=estilos_linea[metodo],
-                    linewidth=1, label=f'{metodo} ({h_valor:.0f}m)', alpha=0.6, zorder=4)
-
+    ax_even_c.axvline(x=h_valor, color=colores_metodos[metodo], linestyle=estilos_linea[metodo], linewidth=1, label=f'{metodo} ({h_valor:.0f}m)', alpha=0.6, zorder=4)
 ax_even_c.axvspan(50, limite_ruido, alpha=0.08, color=color_ruido, zorder=1)
 ax_even_c.axvspan(limite_ruido, limite_sobreagregacion, alpha=0.08, color=color_optimo, zorder=1)
 ax_even_c.axvspan(limite_sobreagregacion, 250, alpha=0.08, color=color_sobreagregacion, zorder=1)
-
-ax_even_c.set_xlabel('Cell size (m)', fontsize=9)
-ax_even_c.set_ylabel('Average events per cell', fontsize=9)
-ax_even_c.legend(loc='best', fontsize=9, framealpha=0.9)
-ax_even_c.tick_params(axis='both', labelsize=9)
+ax_even_c.set_ylabel('Average events per cell', fontsize=8)
+ax_even_c.legend(loc='best', fontsize=8, framealpha=0.9)
+ax_even_c.tick_params(axis='both', labelsize=8)
 ax_even_c.grid(True, alpha=0.3, linestyle='--', zorder=2)
 ax_even_c.set_xlim(50, 250)
 
-# ──────────────────────────────────────────────────────────────────────
-# SUBPLOT 3 (abajo izquierda): PERCENTAGE OF EMPTY CELLS
-# ──────────────────────────────────────────────────────────────────────
-ax_vac_c.plot(df_resultados['h'], df_resultados['pct_vacias'], 
-            'o-', linewidth=1, markersize=5, color='#A23B72', label='% Empty cells', zorder=3)
-
+# Subplot 3 (abajo izquierda)
+ax_vac_c.plot(df_resultados['h'], df_resultados['pct_vacias'], 'o-', linewidth=1, markersize=5, color='#A23B72', label='% Empty cells', zorder=3)
 for metodo, h_valor in valores_optimos.items():
-    ax_vac_c.axvline(x=h_valor, color=colores_metodos[metodo], linestyle=estilos_linea[metodo],
-                   linewidth=1, label=f'{metodo} ({h_valor:.0f}m)', alpha=0.6, zorder=4)
-
+    ax_vac_c.axvline(x=h_valor, color=colores_metodos[metodo], linestyle=estilos_linea[metodo], linewidth=1, label=f'{metodo} ({h_valor:.0f}m)', alpha=0.6, zorder=4)
 ax_vac_c.axvspan(50, limite_ruido, alpha=0.08, color=color_ruido, zorder=1)
 ax_vac_c.axvspan(limite_ruido, limite_sobreagregacion, alpha=0.08, color=color_optimo, zorder=1)
 ax_vac_c.axvspan(limite_sobreagregacion, 250, alpha=0.08, color=color_sobreagregacion, zorder=1)
-
-ax_vac_c.set_xlabel('Cell size (m)', fontsize=9)
-ax_vac_c.set_ylabel('Cells without records (%)', fontsize=9)
-ax_vac_c.legend(loc='best', fontsize=9, framealpha=0.9)
-ax_vac_c.tick_params(axis='both', labelsize=9)
+ax_vac_c.set_xlabel('Cell size (m)', fontsize=8)
+ax_vac_c.set_ylabel('Cells without records (%)', fontsize=8)
+ax_vac_c.legend(loc='best', fontsize=8, framealpha=0.9)
+ax_vac_c.tick_params(axis='both', labelsize=8)
 ax_vac_c.grid(True, alpha=0.3, linestyle='--', zorder=2)
 ax_vac_c.set_xlim(50, 250)
 
-# ──────────────────────────────────────────────────────────────────────
-# SUBPLOT 4 (abajo derecha): DENSITY VARIANCE
-# ──────────────────────────────────────────────────────────────────────
-ax_var_c.plot(df_resultados['h'], df_resultados['varianza'], 
-            'o-', linewidth=1, markersize=5, color='#2E86AB', label='Variance', zorder=3)
-
+# Subplot 4 (abajo derecha)
+ax_var_c.plot(df_resultados['h'], df_resultados['varianza'], 'o-', linewidth=1, markersize=5, color='#2E86AB', label='Variance', zorder=3)
 for metodo, h_valor in valores_optimos.items():
-    ax_var_c.axvline(x=h_valor, color=colores_metodos[metodo], linestyle=estilos_linea[metodo], 
-                   linewidth=1, label=f'{metodo} ({h_valor:.0f}m)', alpha=0.6, zorder=4)
-
+    ax_var_c.axvline(x=h_valor, color=colores_metodos[metodo], linestyle=estilos_linea[metodo], linewidth=1, label=f'{metodo} ({h_valor:.0f}m)', alpha=0.6, zorder=4)
 ax_var_c.axvspan(50, limite_ruido, alpha=0.08, color=color_ruido, zorder=1)
 ax_var_c.axvspan(limite_ruido, limite_sobreagregacion, alpha=0.08, color=color_optimo, zorder=1)
 ax_var_c.axvspan(limite_sobreagregacion, 250, alpha=0.08, color=color_sobreagregacion, zorder=1)
-
-ax_var_c.set_xlabel('Cell size (m)', fontsize=9)
-ax_var_c.set_ylabel('Variance (events²/km⁴)', fontsize=9)
-ax_var_c.legend(loc='best', fontsize=9, framealpha=0.9)
-ax_var_c.tick_params(axis='both', labelsize=9)
+ax_var_c.set_xlabel('Cell size (m)', fontsize=8)
+ax_var_c.set_ylabel('Variance (events²/km⁴)', fontsize=8)
+ax_var_c.legend(loc='best', fontsize=8, framealpha=0.9)
+ax_var_c.tick_params(axis='both', labelsize=8)
 ax_var_c.grid(True, alpha=0.3, linestyle='--', zorder=2)
 ax_var_c.set_xlim(50, 250)
 
-# Ajustar espaciado
-fig_combinada.tight_layout()
-# Guardar figura combinada
+# Ajuste final de espaciado y guardado
+fig_combinada.tight_layout(pad=0.5)   # margen compacto
 output_combinada = resultados_dir / "metricas_combinadas_2x2.pdf"
 fig_combinada.savefig(output_combinada, format='pdf', bbox_inches='tight')
 plt.close(fig_combinada)

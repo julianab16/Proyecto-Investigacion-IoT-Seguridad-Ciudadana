@@ -1,23 +1,6 @@
 """
 fuzzy_gap_statistics.py : Gap Statistics para Fuzzy C-Means (Fase de Preprocesamiento).
 
-CORRECCIONES APLICADAS vs versión original:
-─────────────────────────────────────────────────────────────────────────────
-BUG 1 [CRÍTICO] — Orientación de datos (data shape)
-  ORIGINAL : cmeans recibía data con shape (N, 2), pero cmeans espera (S=2, N).
-             Esto causaba que n = data.shape[1] = 2 en vez de N,
-             generando u0 de shape (C, 2) y fallos en las multiplicaciones matriciales.
-  CORREGIDO: Se transpone data antes de pasarlo a cmeans:
-             cmeans(data=data.T, ...) o cmeans(data=randomReference.T, ...)
-
-BUG 2 [LÓGICO] — gaps_sks solo se asignaba cuando la condición se cumplía
-  ORIGINAL : gaps_sks[k] = valor  SOLO SI gaps[k] >= gaps[k+1] - sError[k+1]
-             Cuando la condición NO se cumplía, gaps_sks[k] quedaba en 0,
-             introduciendo ceros falsos que distorsionaban el argmax.
-  CORREGIDO: gaps_sks[k] = gaps[k] - gaps[k+1] - sError[k+1]  SIEMPRE.
-             El valor positivo indica que el criterio se cumple (buen k),
-             el valor negativo indica que NO se cumple. El argmax es correcto.
-
 Fórmulas implementadas (según documento DPLACE):
 ─────────────────────────────────────────────────────────────────────────────
   Gap(j)  = (1/B) * Σ log(J*_jb) − log(J_mj)               [ec. Gap Statistics]
@@ -28,120 +11,163 @@ Fórmulas implementadas (según documento DPLACE):
 
 import numpy as np
 import pandas as pd
-from cluster.fuzzycmeans.cmeans_algorithm import cmeans
+from cluster.fuzzycmeans.cmeans_algorithm import cmeans_with_sensitivity
 
 
-def gap_statistics_fuzzy(data, nrefs=3, maxClusters=15):
+def gap_statistics_fuzzy(data, nrefs, AREA_SIZE, gateways):
     """
-    Calcula el número óptimo de clusters C para Fuzzy C-Means usando Gap Statistic.
-    Basado en: Sentelle, Hong, Georgiopoulos, Anagnostopoulos.
-
-    Parámetros
-    ----------
-    data : ndarray, shape (N, 2)
-        Coordenadas 2D de los dispositivos IoT. shape = (N_dispositivos, 2).
-        NOTA: internamente se transpone a (2, N) para cmeans.
-    nrefs : int
-        Número B de conjuntos de datos aleatorios de referencia.
-    maxClusters : int
-        Número máximo de clusters M a evaluar.
-
-    Retorna
-    -------
-    k         : int — número óptimo de clusters (gateways)
-    resultsdf : DataFrame — columnas ['clusterCount', 'gap'] para curva Gap
-    gp        : DataFrame — columnas ['clusterCount', 'Gap_sk'] para gráfica de barras
+    Calcula el número óptimo de clusters para Fuzzy C-Means usando Gap Statistics.
+    Implementa el criterio original: menor j tal que Gap(j) >= Gap(j+1) - s(j+1).
+    Versión vectorizada con NumPy para mayor eficiencia.
     """
-    # ── Arreglos de acumulación ────────────────────────────────────────────
-    sdk    = np.zeros(maxClusters)          # desviación estándar por j
-    sError = np.zeros(maxClusters)          # error de simulación s(j)
-    BWkbs  = np.zeros(nrefs)               # log(J*_jb) para cada referencia b
-    Wks    = np.zeros(maxClusters)          # log(J_mj) datos reales
-    Wkbs   = np.zeros(maxClusters)          # (1/B)*Σ log(J*_jb) = media referencias
-    gaps_sks = np.zeros(maxClusters - 1)   # Gap(k) − Gap(k+1) − s(k+1)
 
-    gaps      = np.zeros(maxClusters - 1)  # Gap(j) para cada j
-    resultsdf = pd.DataFrame({'clusterCount': [], 'gap': []})
-    gp        = pd.DataFrame({'clusterCount': [], 'Gap_sk': []})
+    #n_samples = data.shape[0]
+    #maxClusters = int(np.sqrt(n_samples))
+    #maxClusters = max(2, maxClusters)
+    maxClusters = 5
 
-    # ── Bucle principal: evaluar cada cantidad de clusters j ──────────────
-    for gap_index, c in enumerate(range(1, maxClusters)):
+    print(f"  [Preprocessing] Gap Statistics (nrefs={nrefs} maxClusters={maxClusters})")
 
-        # ── Paso 1: B referencias aleatorias → calcular log(J*_jb) ──────
-        # Fórmula: Gap(j) = (1/B)*Σ_b log(J*_jb) − log(J_mj)
+    n_clusters_range = np.arange(1, maxClusters+1)  # (1, 2, ..., maxClusters)
+
+    # Preasignar arrays para almacenar resultados
+    gaps = np.zeros(maxClusters)
+    s_errors = np.zeros(maxClusters)
+    std_j = np.zeros(maxClusters)
+    gaps_sks = np.zeros(maxClusters)
+
+    data_min = data.min(axis=0)
+    data_max = data.max(axis=0)
+    rng = np.random.default_rng(42)
+    
+    for idx, c in enumerate(n_clusters_range):
+        # Array para almacenar los log(J*_jb) de las B referencias
+        log_refs = np.zeros(nrefs)
+ 
+        # Generar y procesar cada conjunto de referencia
         for i in range(nrefs):
-            # Generar conjunto aleatorio con la misma forma que los datos originales
-            randomReference = np.random.random_sample(size=data.shape)  # shape (N, 2)
+            random_ref = rng.uniform(
+                            low=data_min,
+                            high=data_max,
+                            size=data.shape
+                        )
+            # Calcular FCM sobre referencia (transponer para cmeans)
+            _, _, _, _, jm, _, _ = cmeans_with_sensitivity(
+                                        gateways,
+                                        data=random_ref.T,
+                                        c=c,
+                                        m=2,
+                                        error=0.005,
+                                        maxiter=1000, 
+                                        AREA_SIZE=AREA_SIZE
+                                    )
 
-            # FIX BUG 1: randomReference.T → shape (2, N) que es lo que espera cmeans
-            cntr, u, u0, d, jm, p, fpc = cmeans(
-                data=randomReference.T,   # ← CORREGIDO: .T para (2, N)
-                c=c, m=2, error=0.005, maxiter=1000
-            )
-            # Usar último valor de la función objetivo (más estable que la media)
-            BWkbs[i] = np.log(jm[-1])
+            log_refs[i] = np.log(jm[-1])
+     
+        # Datos reales
+        _, _, _, _, jm_real, _, _ = cmeans_with_sensitivity(
+                                        gateways,
+                                        data=data.T,
+                                        c=c,
+                                        m=2,
+                                        error=0.005,
+                                        maxiter=1000,
+                                        AREA_SIZE=AREA_SIZE
+                                    )
 
-        # ── Paso 2: Ajustar FCM a datos reales → calcular log(J_mj) ─────
-        # FIX BUG 1: data.T → shape (2, N) que es lo que espera cmeans
-        cntr, u, u0, d, jm, p, fpc = cmeans(
-            data=data.T,   # ← CORREGIDO: .T para (2, N)
-            c=c, m=2, error=0.005, maxiter=1000
-        )
+        log_real = np.log(jm_real[-1])
 
-        # ── Paso 3: Calcular Gap(j) ──────────────────────────────────────
-        # Gap(j) = (1/B)*Σ log(J*_jb) − log(J_mj)
-        Wks[gap_index]  = np.log(jm[-1])
-        gap             = np.mean(BWkbs) - Wks[gap_index]
-        gaps[gap_index] = gap
+        if c in [1, 2]:
+            print(f"  c={c}: log_real={log_real:.4f}, jm={jm_real[-1]:.2e}")
 
-        resultsdf = pd.concat(
-            [resultsdf, pd.DataFrame({'clusterCount': [c], 'gap': [gap]})],
-            ignore_index=True
-        )
+        # Gap(j) = media(log_refs) - log_real
+        mean_log_ref = np.mean(log_refs)
+        gaps[idx] = mean_log_ref - log_real
+        
+        # Desviación estándar (ddof=0 porque es población)
+        std_j[idx] = np.std(log_refs, ddof=0)
+        s_errors[idx] = std_j[idx] * np.sqrt(1 + 1 / nrefs)
 
-        # ── Paso 4: Desviación estándar y error de simulación ────────────
-        # std(j)  = sqrt( (1/B) * Σ (log(J_jb) − Wkbs_j)^2 )
-        # s(j)    = std(j) * sqrt(1 + 1/B)
-        Wkbs[gap_index]   = np.mean(BWkbs)
-        sdk[gap_index]    = np.sqrt(np.mean((BWkbs - Wkbs[gap_index]) ** 2))
-        sError[gap_index] = sdk[gap_index] * np.sqrt(1 + 1.0 / nrefs)
 
-    # ── Calcular gaps_sks = Gap(k) − Gap(k+1) − s(k+1) ──────────────────
-    # Criterio del documento: seleccionar menor j donde Gap(j) >= Gap(j+1) − s(j+1)
-    # Un valor positivo de gaps_sks[k] indica que el criterio se CUMPLE para k.
-    for k in range(len(gaps)):
-        if k < len(gaps) - 1:
-            # FIX BUG 2: asignar el valor SIEMPRE (no solo cuando condición se cumple)
-            # ORIGINAL: solo asignaba si gaps[k] >= gaps[k+1] - sError[k+1]
-            #           → dejaba gaps_sks[k]=0 cuando NO se cumplía (valor falso)
-            # CORRECTO: asignar siempre el valor real; positivo=cumple, negativo=no cumple
-            gaps_sks[k] = gaps[k] - gaps[k + 1] - sError[k + 1]
+    """ # Selección del k óptimo según Ecuación (5)
+        valid_clusters = {}
+        for idx in range(1, len(gaps) - 1):
+            # Luego verificar criterio
+            if gaps[idx] >= gaps[idx + 1] - s_errors[idx + 1]:  # ← CRITERIO REAL
+                k = idx + 1
+                valid_clusters[k] = gaps[idx]
+                gaps_sks[idx] = gaps[idx] - gaps[idx + 1] + s_errors[idx + 1]
+
+        # Construcción de DataFrames para gráficos
+        resultsdf = pd.DataFrame({
+            'clusterCount': n_clusters_range,
+            'gap': gaps
+        })
+        
+        gp = pd.DataFrame({
+            'clusterCount': n_clusters_range,
+            'Gap_sk': gaps_sks
+        })
+
+        # k óptimo: encontrar el k con MAYOR gap_value en valid_clusters
+        if len(valid_clusters) > 0:
+            # Top 2 de valid_clusters (ordenados por valor descendente)
+            top_2_valid = sorted(valid_clusters.items(), key=lambda x: x[1], reverse=True)[:3]
+            top_2_valid_ks = [k for k, v in top_2_valid]
+            
+            # Top 2 de gaps_sks (índices con mayores valores)
+            top_2_gaps_sks_indices = np.argsort(-gaps_sks)[:3]
+            top_2_gaps_sks_ks = top_2_gaps_sks_indices + 1  # Convertir a k (1-based)
+            
+            print(f"  Top 3 valid_clusters (k, gap): {top_2_valid}")
+            print(f"  Top 3 gaps_sks (k): {top_2_gaps_sks_ks}")
+            
+            # Intersección
+            intersection = np.intersect1d(top_2_valid_ks, top_2_gaps_sks_ks)
+            
+            if len(intersection) > 0:
+                optimal_k = np.min(intersection)
+                print(f"  Intersección: {intersection}")
+                print(f"  Optimal k={optimal_k} (mínimo de intersección)")
+            else:
+                # Si no hay intersección, usar el mínimo de los top 2 valid_clusters
+                optimal_k = min(top_2_valid_ks)
+                print(f"  Sin intersección. Usando mínimo de top_2_valid_clusters: k={optimal_k}")
         else:
-            gaps_sks[k] = -20  # penalización para el último índice
+            # Fallback: usar k con máximo Gap directo
+            optimal_k = np.argmax(gaps) + 1
+            print(f"  No valid clusters encontrados. Usando k={optimal_k} (max Gap)")
+                """
+    print("\n Gap Values (primeros 10):")
+    for i in range(min(10, len(gaps))):
+        print(f"k={i+1}: Gap={gaps[i]:.4f}, s={s_errors[i]:.4f}")
+    # Selección del k óptimo según Ecuación (5)
+    # Usar el primer k que cumpla el criterio
+    optimal_k = None
+    for idx in range(1, len(gaps) - 1):
+        # Verificar criterio: Gap(j) >= Gap(j+1) - s(j+1)
+        if gaps[idx] >= gaps[idx + 1] - s_errors[idx + 1]:  # ← CRITERIO REAL
+            optimal_k = idx + 1
+            print(f"  Optimal k={optimal_k} (primer k que cumple criterio)")
+            break
 
-        gp = pd.concat(
-            [gp, pd.DataFrame({'clusterCount': [k + 1], 'Gap_sk': [gaps_sks[k]]})],
-            ignore_index=True
-        )
+    for idx in range(1, len(gaps) - 1):
+        gaps_sks[idx] = gaps[idx] - gaps[idx + 1] + s_errors[idx + 1]
 
-    # ── Selección del k óptimo ────────────────────────────────────────────
-    # Top-3 por Gap más alto
-    iter_points = [
-        x[0] + 1 for x in sorted(enumerate(gaps), key=lambda x: x[1], reverse=True)[:3]
-    ]
-    # Top-3 por gaps_sks más alto (mayor margen sobre el criterio)
-    iter_points_sk = [
-        x[0] + 1 for x in sorted(enumerate(gaps_sks), key=lambda x: x[1], reverse=True)[:3]
-    ]
+    # Fallback si no encuentra ninguno
+    if optimal_k is None:
+        optimal_k = np.argmax(gaps) + 1
+        print(f"  No valid clusters encontrados. Usando k={optimal_k} (max Gap)")
 
-    # Intersección: k que aparece en ambos top-3 → más robusto
-    a = [g for g in iter_points_sk if g in iter_points]
-
-    if len(a) != 0:
-        # Evitar k=1 (trivial) si hay alternativas
-        a_sin_uno = [x for x in a if x != 1]
-        k = min(a_sin_uno) if a_sin_uno else min(iter_points_sk)
-    else:
-        k = min(iter_points_sk)
-
-    return k, resultsdf, gp
+    # Construcción de DataFrames para gráficos
+    resultsdf = pd.DataFrame({
+        'clusterCount': n_clusters_range,
+        'gap': gaps
+    })
+    
+    gp = pd.DataFrame({
+        'clusterCount': n_clusters_range,
+        'Gap_sk': gaps_sks
+    })
+            
+    return optimal_k, resultsdf, gp

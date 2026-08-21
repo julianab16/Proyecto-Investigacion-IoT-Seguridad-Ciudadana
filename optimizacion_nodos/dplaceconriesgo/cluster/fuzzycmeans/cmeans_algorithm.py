@@ -2,79 +2,8 @@
 cmeans_algorithm.py : Fuzzy C-means clustering algorithm.
 """
 import numpy as np
-import pandas as pd
 from scipy.spatial.distance import cdist
 from cluster.fuzzycmeans.normalize_columns import normalize_columns, normalize_power_columns
-
-
-def _cmeans0(data, u_old, c, m, metric, sf, sample_weights):
-    """
-    Single step in generic fuzzy c-means clustering algorithm.
-
-    Modified from Ross, Fuzzy Logic w/Engineering Applications (2010),
-    pages 352-353, equations 10.28 - 10.35.
-
-    Parameters inherited from cmeans()
-    """
-    # Normalizing, then eliminating any potential zero values.
-    u_old = normalize_columns(u_old)
-    u_old = np.fmax(u_old, np.finfo(np.float64).eps)
-
-    um = u_old ** m
-
-    # Calculate cluster centers
-    data = data.T
-    #cntr = um.dot(data) / np.atleast_2d(um.sum(axis=1)).T antes
-
-    # Cálculo de centroides ponderados
-    if sample_weights is not None:
-        weighted_um = um * sample_weights  # broadcasting (C, N) * (N,) -> (C, N)
-        cntr = weighted_um.dot(data) / np.atleast_2d(weighted_um.sum(axis=1)).T
-    else:
-        cntr = um.dot(data) / np.atleast_2d(um.sum(axis=1)).T
-
-
-    d = _distance(data, cntr, metric)
-    d = np.fmax(d, np.finfo(np.float64).eps)
-    d = range_limit(d, max=2000, sf=sf)
-
-    # Función objetivo ponderada
-    if sample_weights is not None:
-        jm = (um * (d ** 2) * sample_weights).sum()
-    else:
-        jm = (um * (d ** 2)).sum()
-
-    #jm = (um * d ** 2).sum() antes
-
-    u = normalize_power_columns(d, - 2. / (m - 1))
-
-    return cntr, u, jm, d
-
-
-def _distance(data, centers, metric='euclidean'):
-    """
-    Euclidean distance from each point to each cluster center.
-
-    Parameters
-    ----------
-    data : 2d array (N x Q)
-        Data to be analyzed. There are N data points.
-    centers : 2d array (C x Q)
-        cluster centers. There are C clusters, with Q features.
-    metric: string
-        By default is set to euclidean. Passes any option accepted by
-        ``scipy.spatial.distance.cdist``.
-    Returns
-    -------
-    dist : 2d array (C x N)
-        Euclidean distance from each point, to each cluster center.
-
-    See Also
-    --------
-    scipy.spatial.distance.cdist
-    """
-    return cdist(data, centers, metric=metric).T
-
 
 def _fp_coeff(u):
     """
@@ -97,279 +26,181 @@ def _fp_coeff(u):
 
     return np.trace(u.dot(u.T)) / float(n)
 
+def cmeans_with_sensitivity(
+    gateways,
+    data,
+    c,
+    m,
+    error,
+    maxiter,
+    AREA_SIZE,
+    metric='euclidean',
+    init=None,
+    seed=None
+    ):
 
-def cmeans(data, c, m, error, maxiter, metric='euclidean', init=None, seed=None, sf=12, sample_weights=None):
-    """
-    Fuzzy c-means clustering algorithm [1].
+    # Parámetros simples de propagación
+    tx_power_dbm = 14
+    failed_gateways=None
+    SF_SENSITIVITY = {7: -125, 8: -128, 9: -131, 10: -134, 11: -136, 12: -137}
 
-    Parameters
-    ----------
-    data : 2d array, size (S, N)
-        Data to be clustered.  N is the number of data sets; S is the number
-        of features within each sample vector.
-    c : int
-        Desired number of clusters or classes.
-    m : float
-        Array exponentiation applied to the membership function u_old at each
-        iteration, where U_new = u_old ** m.
-    error : float
-        Stopping criterion; stop early if the norm of (u[p] - u[p-1]) < error.
-    maxiter : int
-        Maximum number of iterations allowed.
-    metric: string
-        By default is set to euclidean. Passes any option accepted by
-        ``scipy.spatial.distance.cdist``.
-    init : 2d array, size (S, N)
-        Initial fuzzy c-partitioned matrix. If none provided, algorithm is
-        randomly initialized.
-    seed : int
-        If provided, sets random seed of init. No effect if init is
-        provided. Mainly for debug/testing purposes.
-
-    Returns
-    -------
-    cntr : 2d array, size (S, c)
-        cluster centers.  Data for each center along each feature provided
-        for every cluster (of the `c` requested clusters).
-    u : 2d array, (S, N)
-        Final fuzzy c-partitioned matrix.
-    u0 : 2d array, (S, N)
-        Initial guess at fuzzy c-partitioned matrix (either provided init or
-        random guess used if init was not provided).
-    d : 2d array, (S, N)
-        Final Euclidian distance matrix.
-    jm : 1d array, length P
-        Objective function history.
-    p : int
-        Number of iterations run.
-    fpc : float
-        Final fuzzy partition coefficient.
-
-
-    Notes
-    -----
-    The algorithm implemented is from Ross et al. [1]_.
-
-    Fuzzy C-Means has a known problem with high dimensionality datasets, where
-    the majority of cluster centers are pulled into the overall center of
-    gravity. If you are clustering data with very high dimensionality and
-    encounter this issue, another clustering method may be required. For more
-    information and the theory behind this, see Winkler et al. [2]_.
-
-    References
-    ----------
-    .. [1] Ross, Timothy J. Fuzzy Logic With Engineering Applications, 3rd ed.
-           Wiley. 2010. ISBN 978-0-470-74376-8 pp 352-353, eq 10.28 - 10.35.
-
-    .. [2] Winkler, R., Klawonn, F., & Kruse, R. Fuzzy c-means in high
-           dimensional spaces. 2012. Contemporary Theory and Pragmatic
-           Approaches in Fuzzy Computing Utilization, 1.
-    """
-    # Setup u0
+    # Inicialización FCM
     if init is None:
         if seed is not None:
-            np.random.seed(seed=seed)
+            np.random.seed(seed)
+
         n = data.shape[1]
         u0 = np.random.rand(c, n)
         u0 = normalize_columns(u0)
         init = u0.copy()
-    u0 = init
-    u = np.fmax(u0, np.finfo(np.float64).eps)
 
-    # Initialize loop parameters
+    u = np.fmax(init, np.finfo(np.float64).eps)
+
     jm = np.zeros(0)
     p = 0
 
-    # Validación de sample_weights
-    if sample_weights is not None:
-        sample_weights = np.asarray(sample_weights, dtype=np.float64)
-        if sample_weights.shape != (data.shape[1],):
-            raise ValueError(f"sample_weights must be of length {data.shape[1]}, got {sample_weights.shape}")
-
-    # Main cmeans loop
     while p < maxiter - 1:
-        u2 = u.copy()
-        [cntr, u, Jjm, d] = _cmeans0(data, u2, c, m, metric, sf, sample_weights)
-        jm = np.hstack((jm, Jjm))
+
+        u_old = u.copy()
+
+        u_old = normalize_columns(u_old)
+        u_old = np.fmax(u_old, np.finfo(np.float64).eps)
+
+        # =========================
+        # Centros FCM (Eq. 7)
+        # =========================
+        um = u_old ** m
+
+        cntr = um.dot(data.T) / np.atleast_2d(
+            um.sum(axis=1)
+        ).T
+
+        # =========================
+        # Distancia euclidiana
+        # =========================
+        dist_nodes  = cdist(
+            data.T,
+            cntr,
+            metric=metric
+        ).T
+
+        dist_gateway = cdist(
+            cntr,
+            gateways,
+            metric=metric
+        )
+
+        nearest_gateway = np.argmin(dist_gateway, axis=1)
+
+        gateway_distance = dist_gateway[
+            np.arange(c),
+            nearest_gateway
+        ]
+
+
+        # max_distance = np.sqrt(width**2 + height**2)
+
+        # Evitar log10(0)
+        d_safe = np.fmax(gateway_distance, np.finfo(np.float64).eps)
+
+        # Frecuencia LoRaWAN (MHz)
+        reference_distance = 1.0      # d0 en metros
+        pl0 = 40.0                    # PL(d0) en dB
+        n_exp = 3.5                   # exponente de pérdidas
+
+        # d_safe contiene la distancia euclidiana en metros (ya calculada)
+        # Calcular path loss y RSSI
+        path_loss = pl0 + 10 * n_exp * np.log10(d_safe / reference_distance)
+                
+        # El RSSI se calcula por centroide (C,), pero la matriz de
+        # distancias/membresías usa una columna por dispositivo (C, N).
+        # Repetirlo permite evaluar la cobertura de cada centroide para
+        # todos los dispositivos sin cambiar el contrato de FCM.
+        rssi = np.broadcast_to(
+            (tx_power_dbm - path_loss)[:, np.newaxis],
+            (c, data.shape[1])
+        )
+        
+        # =========================
+        # Verificación de potencia por SF (7..12)
+        # =========================
+        # required_sf: SF mínimo que permite enlace para cada par (gateway, dispositivo)
+        # 0 significa: no alcanza ni SF12 (sin cobertura)
+        sf_levels = np.array([7, 8, 9, 10, 11, 12], dtype=np.int8)
+        sf_thresholds = np.array([SF_SENSITIVITY[sf] for sf in sf_levels], dtype=np.float64)
+
+        # mask con shape (6, C, N): para cada SF, centroide y dispositivo
+        sf_mask = rssi[np.newaxis, :, :] >= sf_thresholds[:, np.newaxis, np.newaxis]
+
+        first_valid_idx = np.argmax(sf_mask, axis=0)
+        has_coverage = np.any(sf_mask, axis=0)
+        required_sf = np.where(has_coverage, sf_levels[first_valid_idx], 0).astype(np.int8)
+
+
+        # =========================
+        # Gestión de fallos de gateway (opcional)
+        # =========================
+        # Si un gateway falla, invalida sus enlaces y fuerza reasignación automática
+        # hacia SF más altos en gateways alternativos (si existen).
+        if failed_gateways is not None:
+            failed_idx = np.asarray(failed_gateways, dtype=int)
+            if failed_idx.size > 0:
+                failed_idx = failed_idx[(failed_idx >= 0) & (failed_idx < c)]
+                if failed_idx.size > 0:
+                    required_sf[failed_idx, :] = 0
+
+        # SF asignado por dispositivo tras considerar fallos:
+        # se usa el SF más alto disponible para priorizar conectividad.
+        assigned_sf = np.max(required_sf, axis=0)
+
+        # Criterio de validez de despliegue con RSSI:
+        # sin cobertura si no alcanza ningún gateway ni siquiera con SF12.
+        no_coverage = required_sf == 0
+
+        # =========================
+        # Penalización distancia
+        # =========================
+        dist_adjusted = dist_nodes.copy()
+
+        max_distance = AREA_SIZE * np.sqrt(2)
+
+        # Si no hay cobertura → asignar máxima distancia
+        dist_adjusted[no_coverage] = max_distance
+
+        dist_adjusted = np.fmax(
+            dist_adjusted,
+            np.finfo(np.float64).eps
+        )
+        
+        # =========================
+        # Función objetivo (Eq. 1)
+        # =========================
+        jm_val = np.sum(
+            (u_old ** m) *
+            (dist_adjusted ** 2) #ejecutar
+        )
+
+        # =========================
+        # Membresía (Eq. 6)
+        # =========================
+        power = -2.0 / (m - 1)
+
+        u = normalize_power_columns(
+            dist_adjusted,
+            power
+        )
+
+        #print(f"jm_val: {jm_val}")
+
+        jm = np.hstack((jm, jm_val))
+
         p += 1
 
-        # Stopping rule
-        delta = np.linalg.norm(u - u2)
-        if delta < error:
+        # Eq. 9
+        if np.linalg.norm(u - u_old) < error:
             break
 
-    # Final calculations
-    error = np.linalg.norm(u - u2)
+    error = np.linalg.norm(u - u_old)
     fpc = _fp_coeff(u)
 
-    return cntr, u, u0, d, jm, p, fpc
-
-
-def cmeans_predict(test_data, cntr_trained, m, error, maxiter, metric='euclidean', init=None,
-                   seed=None, sf=12):
-    """
-    Prediction of new data in given a trained fuzzy c-means framework [1].
-
-    Parameters
-    ----------
-    test_data : 2d array, size (S, N)
-        New, independent data set to be predicted based on trained c-means
-        from ``cmeans``. N is the number of data sets; S is the number of
-        features within each sample vector.
-    cntr_trained : 2d array, size (S, c)
-        Location of trained centers from prior training c-means.
-    m : float
-        Array exponentiation applied to the membership function u_old at each
-        iteration, where U_new = u_old ** m.
-    error : float
-        Stopping criterion; stop early if the norm of (u[p] - u[p-1]) < error.
-    maxiter : int
-        Maximum number of iterations allowed.
-    metric: string
-        By default is set to euclidean. Passes any option accepted by
-        ``scipy.spatial.distance.cdist``.
-    init : 2d array, size (S, N)
-        Initial fuzzy c-partitioned matrix. If none provided, algorithm is
-        randomly initialized.
-    seed : int
-        If provided, sets random seed of init. No effect if init is
-        provided. Mainly for debug/testing purposes.
-
-    Returns
-    -------
-    u : 2d array, (S, N)
-        Final fuzzy c-partitioned matrix.
-    u0 : 2d array, (S, N)
-        Initial guess at fuzzy c-partitioned matrix (either provided init or
-        random guess used if init was not provided).
-    d : 2d array, (S, N)
-        Final Euclidian distance matrix.
-    jm : 1d array, length P
-        Objective function history.
-    p : int
-        Number of iterations run.
-    fpc : float
-        Final fuzzy partition coefficient.
-
-    Notes
-    -----
-    Ross et al. [1]_ did not include a prediction algorithm to go along with
-    fuzzy c-means. This prediction algorithm works by repeating the clustering
-    with fixed centers, then efficiently finds the fuzzy membership at all
-    points.
-
-    References
-    ----------
-    .. [1] Ross, Timothy J. Fuzzy Logic With Engineering Applications, 3rd ed.
-           Wiley. 2010. ISBN 978-0-470-74376-8 pp 352-353, eq 10.28 - 10.35.
-    """
-    c = cntr_trained.shape[0]
-
-    # Setup u0
-    if init is None:
-        if seed is not None:
-            np.random.seed(seed=seed)
-        n = test_data.shape[1]
-        u0 = np.random.rand(c, n)
-        u0 = normalize_columns(u0)
-        init = u0.copy()
-    u0 = init
-    u = np.fmax(u0, np.finfo(np.float64).eps)
-
-    # Initialize loop parameters
-    jm = np.zeros(0)
-    p = 0
-
-    # Main cmeans loop
-    while p < maxiter - 1:
-        u2 = u.copy()
-        [u, Jjm, d] = _cmeans_predict0(test_data, cntr_trained, u2, c, m, metric, sf)
-        jm = np.hstack((jm, Jjm))
-        p += 1
-
-        # Stopping rule
-        if np.linalg.norm(u - u2) < error:
-            break
-
-    # Final calculations
-    error = np.linalg.norm(u - u2)
-    fpc = _fp_coeff(u)
-
-    return u, u0, d, jm, p, fpc
-
-
-def _cmeans_predict0(test_data, cntr, u_old, c, m, metric, sf):
-    """
-    Single step in fuzzy c-means prediction algorithm. Clustering algorithm
-    modified from Ross, Fuzzy Logic w/Engineering Applications (2010)
-    p.352-353, equations 10.28 - 10.35, but this method to generate fuzzy
-    predictions was independently derived by Josh Warner.
-
-    Parameters inherited from cmeans()
-
-    Very similar to initial clustering, except `cntr` is not updated, thus
-    the new test data are forced into known (trained) clusters.
-    """
-    # Normalizing, then eliminating any potential zero values.
-    u_old = normalize_columns(u_old)
-    u_old = np.fmax(u_old, np.finfo(np.float64).eps)
-
-    um = u_old ** m
-    test_data = test_data.T
-
-    # For prediction, we do not recalculate cluster centers. The test_data is
-    # forced to conform to the prior clustering.
-
-    d = _distance(test_data, cntr, metric)
-    d = np.fmax(d, np.finfo(np.float64).eps)
-    d = range_limit(d, max=2000, sf=sf)
-
-    jm = (um * d ** 2).sum()
-
-    u = normalize_power_columns(d, - 2. / (m - 1))
-
-    return u, jm, d
-
-
-def range_limit(d, max=2000, sf=12):
-    """
-    Aplica restricciones de señal RSSI según sensibilidad LoRaWAN.
-    Si la señal es insuficiente, la distancia se establece al máximo.
-    """
-    # Diccionario de sensibilidad por SF (dBm)
-    sensitivity = {7: -125, 8: -128, 9: -131, 10: -134, 11: -136, 12: -137}
-    
-    # Evitar división por cero y logaritmo de cero
-    d = np.asarray(d, dtype=np.float64)
-    d_safe = np.maximum(d, 1e-6)
-    
-    # Modelo RSSI: TX=14dBm, f=868MHz, n=3.5
-    rssi = -17.222 - 35 * np.log10(d_safe)
-    
-    # Aplicar restricción: si RSSI < sensibilidad, distancia = max
-    threshold = sensitivity.get(sf, sensitivity[12])
-    rssi_insufficient = rssi < threshold
-    d[rssi_insufficient] = max
-    
-    return d
-
-
-def points_limit(data, k, maxPoints=100):
-    desorganized = True
-    while desorganized:
-        cntr, u, u0, d, jm, p, fpc = cmeans(data=data, c=k, m=2, error=0.005, maxiter=1000, init=None, sf=12)
-        df = pd.DataFrame(u)
-        a = 0
-        for index, row in df.iterrows():
-            aux = []
-            for item in row:
-                if item >= 0.6:
-                    aux.append(item)
-            if len(aux) >= maxPoints:
-                k += 1
-                break
-            else:
-                a += 1
-        if a == k:
-            desorganized = False
-    return k
+    return cntr, u, u0, dist_adjusted, jm, p, fpc

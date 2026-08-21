@@ -43,10 +43,10 @@ class GeneticAlgorithmGatewayOptimizer:
         # Expandir límites un 10%
         x_range = self.x_max - self.x_min
         y_range = self.y_max - self.y_min
-        self.x_min -= x_range * 0.1
-        self.x_max += x_range * 0.1
-        self.y_min -= y_range * 0.1
-        self.y_max += y_range * 0.1
+        self.x_min -= x_range * 0.09
+        self.x_max += x_range * 0.09
+        self.y_min -= y_range * 0.09
+        self.y_max += y_range * 0.09
         
         self.best_solution = None
         self.best_fitness = float('inf')
@@ -586,17 +586,16 @@ class LoRaWISEPGAElbow:
     def _print_statistics(self, stats: Dict):
         """Imprime estadísticas"""
         print("\n" + "="*70)
-        print("📊 ESTADÍSTICAS DE LA SOLUCIÓN ÓPTIMA")
+        print(" ESTADÍSTICAS DE LA SOLUCIÓN ÓPTIMA")
         print("="*70)
         print(f"   • Total de Nodos IoT: {len(self.nodes)}")
         print(f"   • Total de Gateways: {self.optimal_k}")
-        print(f"\n📡 DISTRIBUCIÓN DE CARGA:")
+        print(f"\n DISTRIBUCIÓN DE CARGA:")
         for gw_id, count in sorted(stats['nodes_per_gw'].items()):
             pct = count / len(self.nodes) * 100
             bar = '█' * int(pct / 2)
             print(f"   GW-{gw_id+1:2d}: {count:3d} nodos ({pct:5.1f}%) {bar}")
-        
-        print(f"\n📏 MÉTRICAS DE COBERTURA:")
+        print(f"\n MÉTRICAS DE COBERTURA:")
         print(f"   • Distancia Promedio:  {stats['avg_distance']:8.2f} m")
         print(f"   • Distancia Mínima:    {stats['min_distance']:8.2f} m")
         print(f"   • Distancia Máxima:    {stats['max_distance']:8.2f} m")

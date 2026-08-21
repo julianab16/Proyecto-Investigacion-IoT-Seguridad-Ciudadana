@@ -42,6 +42,9 @@ def cmeans_with_sensitivity(
     # Parámetros simples de propagación
     tx_power_dbm = 14
 
+    failed_gateways=None
+    SF_SENSITIVITY = {7: -125, 8: -128, 9: -131, 10: -134, 11: -136, 12: -137}
+
     # Inicialización FCM
     if init is None:
         if seed is not None:
@@ -97,13 +100,39 @@ def cmeans_with_sensitivity(
         rssi = tx_power_dbm - path_loss
         
         # =========================
-        # Verificación coberturap
+        # Verificación de potencia por SF (7..12)
         # =========================
-        SF12_SENSITIVITY = -137  # dBm
+        # required_sf: SF mínimo que permite enlace para cada par (gateway, dispositivo)
+        # 0 significa: no alcanza ni SF12 (sin cobertura)
+        sf_levels = np.array([7, 8, 9, 10, 11, 12], dtype=np.int8)
+        sf_thresholds = np.array([SF_SENSITIVITY[sf] for sf in sf_levels], dtype=np.float64)
 
-        no_coverage = (
-            rssi < SF12_SENSITIVITY
-        )
+        # mask con shape (6, C, N): para cada SF, gateway y dispositivo
+        sf_mask = rssi[np.newaxis, :, :] >= sf_thresholds[:, np.newaxis, np.newaxis]
+
+        first_valid_idx = np.argmax(sf_mask, axis=0)
+        has_coverage = np.any(sf_mask, axis=0)
+        required_sf = np.where(has_coverage, sf_levels[first_valid_idx], 0).astype(np.int8)
+
+        # =========================
+        # Gestión de fallos de gateway (opcional)
+        # =========================
+        # Si un gateway falla, invalida sus enlaces y fuerza reasignación automática
+        # hacia SF más altos en gateways alternativos (si existen).
+        if failed_gateways is not None:
+            failed_idx = np.asarray(failed_gateways, dtype=int)
+            if failed_idx.size > 0:
+                failed_idx = failed_idx[(failed_idx >= 0) & (failed_idx < c)]
+                if failed_idx.size > 0:
+                    required_sf[failed_idx, :] = 0
+
+        # SF asignado por dispositivo tras considerar fallos:
+        # se usa el SF más alto disponible para priorizar conectividad.
+        assigned_sf = np.max(required_sf, axis=0)
+
+        # Criterio de validez de despliegue con RSSI:
+        # sin cobertura si no alcanza ningún gateway ni siquiera con SF12.
+        no_coverage = required_sf == 0
 
         # =========================
         # Penalización distancia

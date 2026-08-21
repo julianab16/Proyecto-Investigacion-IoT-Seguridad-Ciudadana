@@ -1,159 +1,129 @@
 """
 kmeans_gap_statistics.py : Gap Statistics para K-Means (Fase de Procesamiento).
-Encuentra el número óptimo de clusters de gateways a partir de múltiples
-ejecuciones de preprocesamiento.
+Encuentra el número óptimo de clusters K de nodes a partir del conjunto
+acumulado de posiciones generadas en la fase de preprocesamiento.
 
-CORRECCIÓN APLICADA vs versión original:
-─────────────────────────────────────────────────────────────────────────────
-BUG [LÓGICO] — gaps_sks solo se asignaba cuando la condición se cumplía
+Referencia: DPLACE paper — Processing Phase, Ecuaciones (10), (11), (3), (4), (5).
 
-  ORIGINAL (líneas 74-76):
-      if gaps[k_idx] >= gaps[k_idx + 1] - sError[k_idx + 1]:
-          gaps_sks[k_idx] = gaps[k_idx] - gaps[k_idx + 1] - sError[k_idx + 1]
-      # Si la condición NO se cumple → gaps_sks[k_idx] queda en 0 (VALOR FALSO)
+CRITERIO DE SELECCIÓN (Ecuación 5):
+    Seleccionar el menor k tal que Gap(k) >= Gap(k+1) - s(k+1)
+    Si ningún k cumple, elegir el que maximiza Gap(k).
 
-  PROBLEMA: El 0 falso hace que el argmax posterior pueda elegir k's incorrectos.
-  Si ningún k cumple el criterio, todos los gaps_sks quedan en 0, y el top-3
-  se selecciona por posición arbitraria (desempate no determinista).
-
-  CORREGIDO:
-      gaps_sks[k_idx] = gaps[k_idx] - gaps[k_idx + 1] - sError[k_idx + 1]  # SIEMPRE
-      # Positivo → criterio Gap(k) >= Gap(k+1) - s(k+1) se CUMPLE  (buen k)
-      # Negativo → criterio NO se cumple
-      # El argmax selecciona correctamente el k con mayor margen positivo
-
-Fórmulas implementadas (según documento DPLACE - Processing Phase):
-─────────────────────────────────────────────────────────────────────────────
-  J_k     = Σ_k Σ_j ||GW_j^(k) - C_k||^2     [función objetivo K-Means / WCSS]
-  Gap(k)  = (1/B)*Σ_b log(J*_kb) − log(J_k)  [Gap Statistics]
-  std(k)  = sqrt( (1/B)*Σ_b (log(J*_kb) − Wkbs_k)^2 )
-  s(k)    = std(k) * sqrt(1 + 1/B)            [error de simulación]
-  Criterio: seleccionar menor k donde Gap(k) >= Gap(k+1) − s(k+1)
+VECTORIZACIÓN:
+    - Preasignación de arrays con NumPy.
+    - Generación de todas las referencias aleatorias de una sola vez.
+    - Cálculo de inertias por lote usando listas por comprensión.
 """
-
 import numpy as np
 import pandas as pd
 from sklearn.cluster import KMeans
 import warnings
 warnings.filterwarnings('ignore')
 
-
-def gap_statistics_kmeans(data, nrefs, maxClusters):
+def gap_statistics_kmeans(data, nrefs, maxClusters, AREA_SIZE):
     """
     Calcula el número óptimo de clusters K para K-Means usando Gap Statistic.
-    Usada en la Fase de Procesamiento de DPLACE.
+    Implementa el criterio original de la Ecuación (5).
 
     Parámetros
     ----------
-    data : ndarray, shape (N_gateways, 2)
-        Posiciones de gateways acumuladas de múltiples ejecuciones de
-        preprocesamiento. GW_j = (x_j, y_j).
+    data : ndarray
+        Posiciones de gateways GW_j = (x_j, y_j, z_j) acumuladas.
     nrefs : int
-        Número B de conjuntos de datos aleatorios de referencia.
+        Número B de conjuntos de referencia.
     maxClusters : int
-        Número máximo de clusters K a evaluar.
+        Número máximo de clusters a evaluar (k = 1 .. maxClusters).
 
     Retorna
     -------
-    k         : int — número óptimo de clusters (gateways)
-    resultsdf : DataFrame — columnas ['clusterCount', 'gap'] para curva Gap
-    gp        : DataFrame — columnas ['clusterCount', 'Gap_sk'] para gráfica de barras
+    k_optimal : int
+        Número óptimo de clusters.
+    resultsdf : pd.DataFrame
+        Columnas ['clusterCount', 'gap'].
+    gp : pd.DataFrame
+        Columnas ['clusterCount', 'Gap_sk'].
     """
-    # ── Arreglos de acumulación ────────────────────────────────────────────
-    sdk      = np.zeros(maxClusters)         # desviación estándar std(k)
-    sError   = np.zeros(maxClusters)         # error de simulación s(k)
-    BWkbs    = np.zeros(nrefs)               # log(J*_kb) para cada referencia b
-    Wks      = np.zeros(maxClusters)         # log(J_k) datos reales
-    Wkbs     = np.zeros(maxClusters)         # (1/B)*Σ log(J*_kb)
-    gaps_sks = np.zeros(maxClusters - 1)     # Gap(k) − Gap(k+1) − s(k+1)
 
-    gaps      = np.zeros(maxClusters - 1)
-    resultsdf = pd.DataFrame({'clusterCount': [], 'gap': []})
-    gp        = pd.DataFrame({'clusterCount': [], 'Gap_sk': []})
+    n_samples = data.shape[0]
+    actual_max_k = min(maxClusters, n_samples)  # K-Means: n_clusters <= n_samples
+    n_clusters_range = np.arange(1, actual_max_k+1)
 
-    # ── Bucle principal: evaluar cada número de clusters k ────────────────
-    for gap_index, c in enumerate(range(1, maxClusters+1)):
+    print(f"  [Processing] n_samples={n_samples}, maxClusters={maxClusters}, actual_max_k={actual_max_k}")
+    
+    # Preasignar arrays
+    gaps = np.zeros(actual_max_k)
+    s_errors = np.zeros(actual_max_k)
+    std_j = np.zeros(actual_max_k)
+    # Factor constante para s(k)
+    gaps_sks = np.zeros(maxClusters) 
 
-        # ── Paso 1: B referencias aleatorias → log(J*_kb) ────────────────
-        # Genera B conjuntos desorganizados b ∈ {1,...,B} con la misma
-        # extensión que los datos reales, calcula J*_kb (WCSS) para cada uno.
+    data_min = data.min(axis=0)
+    data_max = data.max(axis=0)
+    rng = np.random.default_rng(42)
+
+    # Para cada número de clusters k (asegurar k <= n_samples para K-Means)
+    for idx, k in enumerate(range(1, actual_max_k + 1)):
+        # --- 1. Generar B referencias aleatorias y calcular sus inertias ---
+        inertias_ref = np.zeros(nrefs)
+
         for i in range(nrefs):
-            # Conjunto aleatorio con la misma forma que los datos de gateways
-            random_ref = np.random.random_sample(size=data.shape)  # (N_gw, 2)
-
-            if c == 1:
-                # Un solo cluster: WCSS = Σ ||x_i - media||^2
-                inertia = np.sum((random_ref - random_ref.mean(axis=0)) ** 2)
+            # Referencia uniforme en el rango de los datos reales
+            random_ref = rng.uniform(
+                            low=data_min,
+                            high=data_max,
+                            size=data.shape
+                        )
+            if k == 1:
+                inertias_ref[i] = np.sum((random_ref - random_ref.mean(axis=0))**2)
             else:
-                km = KMeans(n_clusters=c, n_init=5, max_iter=300, random_state=i)
+                km = KMeans(n_clusters=k, n_init=5, max_iter=300, random_state=i)
                 km.fit(random_ref)
-                inertia = km.inertia_   # J*_kb = WCSS del conjunto aleatorio
-
-            BWkbs[i] = np.log(inertia + 1e-10)   # log(J*_kb)
-
-        # ── Paso 2: Ajustar K-Means a datos reales → log(J_k) ───────────
-        # J_k = Σ_k Σ_j ||GW_j^(k) - C_k||^2  (WCSS real)
-        if c == 1:
-            inertia_real = np.sum((data - data.mean(axis=0)) ** 2)
+                inertias_ref[i] = km.inertia_
+        
+        log_refs = np.log(inertias_ref + 1e-10)
+        # --- 2. Inertia sobre los datos reales ---
+        if k == 1:
+            inertia_real = np.sum((data - data.mean(axis=0))**2)
         else:
-            km = KMeans(n_clusters=c, n_init=10, max_iter=300, random_state=42)
+            km = KMeans(n_clusters=k, n_init=10, max_iter=300, random_state=42)
             km.fit(data)
             inertia_real = km.inertia_
+        
+        log_real = np.log(inertia_real + 1e-10)
+        # --- 3. Gap(k) = mean(log_refs) - log_real ---
+        mean_log_ref = np.mean(log_refs)
+        gaps[idx] = mean_log_ref - log_real
 
-        Wks[gap_index] = np.log(inertia_real + 1e-10)
+        # --- 4. Desviación estándar y s(k) ---
+        std_j[idx] = np.std(log_refs, ddof=0)
+        s_errors[idx] = std_j[idx] * np.sqrt(1 + 1 / nrefs)
+    
+    # Selección del k óptimo según Ecuación (5)
+    optimal_k = None
+    for idx in range(1, len(gaps) - 1):
+        # Verificar criterio: Gap(j) >= Gap(j+1) - s(j+1)
+        if gaps[idx] >= gaps[idx + 1] - s_errors[idx + 1]:  # ← CRITERIO REAL
+            optimal_k = idx + 1
+            print(f"  Optimal k={optimal_k} (primer k que cumple criterio)")
+            break
 
-        # ── Paso 3: Gap(k) = (1/B)*Σ log(J*_kb) − log(J_k) ─────────────
-        gap             = np.mean(BWkbs) - Wks[gap_index]
-        gaps[gap_index] = gap
+    for idx in range(1, len(gaps) - 1):
+        gaps_sks[idx] = gaps[idx] - gaps[idx + 1] + s_errors[idx + 1]
 
-        resultsdf = pd.concat(
-            [resultsdf, pd.DataFrame({'clusterCount': [c], 'gap': [gap]})],
-            ignore_index=True
-        )
+    # Fallback si no encuentra ninguno
+    if optimal_k is None:
+        optimal_k = np.argmax(gaps) + 1
+        print(f"  No valid clusters encontrados. Usando k={optimal_k} (max Gap)")
 
-        # ── Paso 4: std(k) y s(k) ────────────────────────────────────────
-        # std(k) = sqrt( (1/B)*Σ(log(J*_kb) − Wkbs_k)^2 )
-        # s(k)   = std(k) * sqrt(1 + 1/B)
-        Wkbs[gap_index]   = np.mean(BWkbs)
-        sdk[gap_index]    = np.sqrt(np.mean((BWkbs - Wkbs[gap_index]) ** 2))
-        sError[gap_index] = sdk[gap_index] * np.sqrt(1 + 1.0 / nrefs)
-
-    # ── Calcular gaps_sks = Gap(k) − Gap(k+1) − s(k+1) ──────────────────
-    # Criterio del documento: seleccionar menor k donde Gap(k) >= Gap(k+1) − s(k+1)
-    for k_idx in range(len(gaps)):
-        if k_idx < len(gaps) - 1:
-            # FIX: asignar el valor SIEMPRE, no solo cuando la condición se cumple.
-            # ORIGINAL: solo asignaba si gaps[k_idx] >= gaps[k_idx+1] - sError[k_idx+1]
-            #           dejando gaps_sks[k_idx]=0 cuando NO se cumplía (valor falso).
-            # CORRECTO: valor positivo → criterio cumple (buen k)
-            #           valor negativo → criterio no cumple
-            gaps_sks[k_idx] = gaps[k_idx] - gaps[k_idx + 1] - sError[k_idx + 1]
-        else:
-            gaps_sks[k_idx] = -20   # penalización para el último índice
-
-        gp = pd.concat(
-            [gp, pd.DataFrame({'clusterCount': [k_idx + 1], 'Gap_sk': [gaps_sks[k_idx]]})],
-            ignore_index=True
-        )
-
-    # ── Selección del k óptimo ────────────────────────────────────────────
-    # Top-3 por Gap más alto
-    iter_points = [
-        x[0] + 1 for x in sorted(enumerate(gaps), key=lambda x: x[1], reverse=True)[:3]
-    ]
-    # Top-3 por gaps_sks más alto (mayor margen sobre el criterio)
-    iter_points_sk = [
-        x[0] + 1 for x in sorted(enumerate(gaps_sks), key=lambda x: x[1], reverse=True)[:3]
-    ]
-
-    # Intersección: k que aparece en ambos top-3 → más robusto
-    a = [g for g in iter_points_sk if g in iter_points]
-
-    if len(a) != 0:
-        # Evitar k=1 (trivial) si hay alternativas
-        a_sin_uno = [x for x in a if x != 1]
-        k = min(a_sin_uno) if a_sin_uno else min(iter_points_sk)
-    else:
-        k = min(iter_points_sk)
-
-    return k, resultsdf, gp
+    # Construcción de DataFrames para gráficos
+    resultsdf = pd.DataFrame({
+        'clusterCount': n_clusters_range,
+        'gap': gaps
+    })
+    
+    gp = pd.DataFrame({
+        'clusterCount': n_clusters_range,
+        'Gap_sk': gaps_sks
+    })
+            
+    return optimal_k, resultsdf, gp

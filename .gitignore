@@ -22,3 +22,5 @@ cache/
 
 # GitHub workflows (if not needed)
 .github/
+
+output**/
