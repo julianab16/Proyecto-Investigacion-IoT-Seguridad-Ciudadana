@@ -97,7 +97,7 @@ class GeoreferenciaMapa:
                 which_result=i
             )
 
-            gdf = gdf.to_crs("EPSG:3115")
+            gdf = gdf.to_crs("EPSG:3116")
 
             print(f"\nResultado {i}")
             print("Área km²:", gdf.geometry.area.sum()/1e6)
@@ -161,7 +161,7 @@ class GeoreferenciaMapa:
         self.grid = gpd.GeoDataFrame(geometry=polygons, crs=self.cali.crs)
         self.grid = self.grid.reset_index(drop=False).rename(columns={'index':'grid_id'})
         
-        print(f"✓ {len(polygons):,} hexágonos generados")
+        print(f" {len(polygons):,} hexágonos generados")
         
     @staticmethod
     def limpiar_coordenadas(df, lat_col='y', lon_col='x'):
@@ -189,7 +189,7 @@ class GeoreferenciaMapa:
             print(f"\n  Cargando: {archivo}")
             df = pd.read_csv(archivo, encoding='utf-8', on_bad_lines='skip')
             
-            print(f"  • Registros iniciales: {len(df):,}")
+            print(f" Registros iniciales: {len(df):,}")
             
             df = self.limpiar_coordenadas(df, 'y', 'x')
             
@@ -369,6 +369,10 @@ class GeoreferenciaMapa:
         
         dentro = self.gdf_casos[self.gdf_casos.within(self.cali.geometry.iloc[0])]
         print(f"  • Casos dentro de Cali: {len(dentro):,}")
+
+        casos_dentro_cali = self.gdf_casos[
+            self.gdf_casos.within(self.cali.geometry.union_all())
+        ]
         
         # Spatial join
         casos_con_celda = gpd.sjoin(self.gdf_casos, self.grid, how="left", predicate="within")
@@ -445,7 +449,7 @@ class GeoreferenciaMapa:
         
         plt.rcParams['font.family'] = 'Arial'
         fig_width_in = 7.16  #  dos columnas
-        fig_height_in = fig_width_in * 0.75         # proporción deseada, ajústala a tu gusto
+        fig_height_in = fig_width_in * 0.75         
         fig, ax = plt.subplots(figsize=(fig_width_in, fig_height_in))
                 
         # Mapa base
@@ -528,6 +532,138 @@ class GeoreferenciaMapa:
         out_path_completo = images_dir / "mapa_calor_genero_cali.pdf"
         plt.savefig(out_path_completo, format='pdf', bbox_inches='tight')
         print(f" Mapa completo guardado: {out_path_completo.name}")
+
+    def guardar_panel_comparativo_resoluciones(self, output_path=None):
+        """Genera y guarda un panel 1x3 para comparar h=100, 160 y 238 m.
+
+        Cada mapa se calcula con los casos ya georreferenciados en el pipeline.
+        Los niveles de riesgo se asignan por percentiles (como en
+        ``clasificar_niveles_inseguridad``) y se muestran con una paleta y una
+        escala categórica compartidas.
+
+        Args:
+            output_path: Ruta opcional del PNG. Por defecto se guarda en
+                ``images/panel_comparativo_resoluciones.png`` junto al script.
+
+        Returns:
+            Path: Ruta de la imagen guardada.
+        """
+        if self.cali is None or self.cali.empty:
+            raise RuntimeError("Primero debe cargarse el mapa base de Cali.")
+        if self.gdf_casos is None:
+            raise RuntimeError("Primero deben georreferenciarse los casos.")
+        if "peso_delito" not in self.gdf_casos.columns:
+            raise ValueError("Los casos georreferenciados no contienen 'peso_delito'.")
+
+        resoluciones = (100, 160, 238)
+        colores = ["white", "green", "blue", "yellow", "#f05209", "#1a0f0a"]
+        cmap = mcolors.ListedColormap(colores, name="riesgo_compartido")
+        norm = mcolors.BoundaryNorm(np.arange(-0.5, 6.5, 1), cmap.N)
+
+        try:
+            area_cali = self.cali.geometry.union_all()
+        except AttributeError:
+            area_cali = self.cali.geometry.unary_union
+        xmin, ymin, xmax, ymax = self.cali.total_bounds
+
+        grids = []
+        for lado_hex in resoluciones:
+            ancho_hex = math.sqrt(3) * lado_hex
+            paso_y = 1.5 * lado_hex
+            x_vals = np.arange(xmin - ancho_hex, xmax + ancho_hex, ancho_hex)
+            y_vals = np.arange(ymin - lado_hex, ymax + lado_hex, paso_y)
+
+            poligonos = []
+            for ix, x in enumerate(x_vals):
+                y_offset = paso_y / 2.0 if ix % 2 else 0.0
+                for y in y_vals:
+                    centro_x, centro_y = x, y + y_offset
+                    coords = [
+                        (centro_x + lado_hex * math.cos(i * math.pi / 3.0),
+                         centro_y + lado_hex * math.sin(i * math.pi / 3.0))
+                        for i in range(6)
+                    ]
+                    hexagono = Polygon(coords)
+                    if hexagono.intersects(area_cali):
+                        poligonos.append(hexagono)
+
+            grid = gpd.GeoDataFrame(
+                {"grid_id": np.arange(len(poligonos))},
+                geometry=poligonos,
+                crs=self.cali.crs,
+            )
+            grid_cali = gpd.overlay(grid, self.cali, how="intersection")
+
+            casos = self.gdf_casos[["peso_delito", "geometry"]].copy()
+            casos_con_celda = gpd.sjoin(
+                casos, grid[["grid_id", "geometry"]], how="inner", predicate="within"
+            )
+            puntajes = casos_con_celda.groupby("grid_id")["peso_delito"].sum()
+            grid_cali["score_raw"] = grid_cali["grid_id"].map(puntajes).fillna(0.0)
+
+            minimo = grid_cali["score_raw"].min()
+            maximo = grid_cali["score_raw"].max()
+            if maximo > minimo:
+                indices = (grid_cali["score_raw"] - minimo) / (maximo - minimo) * 100
+            else:
+                indices = pd.Series(0.0, index=grid_cali.index)
+
+            niveles = np.zeros(len(grid_cali), dtype=int)
+            positivos = indices.to_numpy() > 0
+            if positivos.any():
+                p20, p40, p60, p80 = np.percentile(indices[positivos], [20, 40, 60, 80])
+                valores = indices.to_numpy()
+                niveles[positivos & (valores <= p20)] = 1
+                niveles[positivos & (valores > p20) & (valores <= p40)] = 2
+                niveles[positivos & (valores > p40) & (valores <= p60)] = 3
+                niveles[positivos & (valores > p60) & (valores <= p80)] = 4
+                niveles[positivos & (valores > p80)] = 5
+            grid_cali["nivel_inseguridad"] = niveles
+            grids.append(grid_cali)
+
+        plt.rcParams["font.family"] = "Arial"
+        fig_width_in = 7.16  # dos columnas
+        fig_height_in = fig_width_in * 0.59
+        fig, axes = plt.subplots(1, 3, figsize=(fig_width_in, fig_height_in))
+        bounds = self.cali.total_bounds
+        for ax, lado_hex, grid in zip(axes, resoluciones, grids):
+            self.cali.plot(ax=ax, color="white", edgecolor="black", linewidth=0.55, zorder=1)
+            grid.plot(
+                ax=ax, column="nivel_inseguridad", cmap=cmap, norm=norm,
+                edgecolor="black", linewidth=0.15, zorder=2,
+            )
+            if self.bbox is not None:
+                minx, maxx, miny, maxy = self.bbox
+                ax.set_xlim(minx, maxx)
+                ax.set_ylim(miny, maxy)
+            else:
+                ax.set_xlim(bounds[0], bounds[2])
+                ax.set_ylim(bounds[1], bounds[3])
+            ax.set_aspect("equal")
+            ax.set_title(f"h = {lado_hex} m", fontsize=11, pad=5)
+            ax.set_axis_off()
+
+        etiquetas = ["Sin datos", "Muy bajo", "Bajo", "Medio", "Alto", "Muy alto"]
+        fig.legend(
+            handles=[
+                plt.Rectangle((0, 0), 1, 1, facecolor=colores[i], edgecolor="black", label=etiquetas[i])
+                for i in range(len(etiquetas))
+            ],
+            loc="lower center", ncol=6, frameon=False, fontsize=10,
+            bbox_to_anchor=(0.5, 0.035),
+        )
+        #fig.suptitle("Comparación de mapas de riesgo por resolución", fontsize=12, y=0.96)
+        fig.subplots_adjust(left=0.015, right=0.985, top=0.88, bottom=0.15, wspace=0.04)
+
+        if output_path is None:
+            output_path = Path(__file__).resolve().parent / "images" / "panel_comparativo_resoluciones.png"
+        else:
+            output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(output_path, dpi=600)
+        plt.close(fig)
+        print(f"Panel comparativo guardado: {output_path}")
+        return output_path
         
     def ejecutar_pipeline_completo(self):
         """Ejecuta todo el pipeline de procesamiento"""
@@ -541,6 +677,7 @@ class GeoreferenciaMapa:
         self.georreferenciar_y_calcular_scores()
         self.clasificar_niveles_inseguridad()
         self.visualizar_mapa()
+        self.guardar_panel_comparativo_resoluciones()
         
         # Calcular métricas espaciales
         #gini_results = self.calcular_gini_espacial()
@@ -553,8 +690,6 @@ class GeoreferenciaMapa:
 
         # Visualizar hotspots
         print("\n" + "="*70)
-        print("✓ PROCESO COMPLETADO")
-        print("="*70)
 
 if __name__ == "__main__":
     import json
@@ -567,7 +702,7 @@ if __name__ == "__main__":
         mejorcelda = config['recomendacion']
         mejor_metodo_nombre = config['mejor_metodo']
 
-    print(f"\nMejor tamaño de celda: {mejorcelda} m")
+    print(f"\nMejor tamaño de celda: {mejorcelda:.1f} m")
     print(f"Método ganador: {mejor_metodo_nombre}")
     print()
     

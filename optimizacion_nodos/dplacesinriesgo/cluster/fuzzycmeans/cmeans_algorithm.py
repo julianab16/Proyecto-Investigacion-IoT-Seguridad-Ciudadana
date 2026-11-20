@@ -2,7 +2,6 @@
 cmeans_algorithm.py : Fuzzy C-means clustering algorithm.
 """
 import numpy as np
-import pandas as pd
 from scipy.spatial.distance import cdist
 from cluster.fuzzycmeans.normalize_columns import normalize_columns, normalize_power_columns
 
@@ -37,13 +36,12 @@ def cmeans_with_sensitivity(
     metric='euclidean',
     init=None,
     seed=None,
-    AREA_SIZE=10000):
+    AREA_SIZE=5900):
 
     # Parámetros simples de propagación
     tx_power_dbm = 14
-
-    failed_gateways=None
     SF_SENSITIVITY = {7: -125, 8: -128, 9: -131, 10: -134, 11: -136, 12: -137}
+
 
     # Inicialización FCM
     if init is None:
@@ -56,14 +54,12 @@ def cmeans_with_sensitivity(
         init = u0.copy()
 
     u = np.fmax(init, np.finfo(np.float64).eps)
-
     jm = np.zeros(0)
     p = 0
 
     while p < maxiter - 1:
 
         u_old = u.copy()
-
         u_old = normalize_columns(u_old)
         u_old = np.fmax(u_old, np.finfo(np.float64).eps)
 
@@ -95,44 +91,15 @@ def cmeans_with_sensitivity(
 
         # d_safe contiene la distancia euclidiana en metros (ya calculada)
         # Calcular path loss y RSSI
-        path_loss = pl0 + 10 * n_exp * np.log10(d_safe / reference_distance)
-                
+        path_loss = pl0 + 10 * n_exp * np.log10(d_safe / reference_distance)     
         rssi = tx_power_dbm - path_loss
         
         # =========================
-        # Verificación de potencia por SF (7..12)
+        # Verificación coberturap
         # =========================
-        # required_sf: SF mínimo que permite enlace para cada par (gateway, dispositivo)
-        # 0 significa: no alcanza ni SF12 (sin cobertura)
-        sf_levels = np.array([7, 8, 9, 10, 11, 12], dtype=np.int8)
-        sf_thresholds = np.array([SF_SENSITIVITY[sf] for sf in sf_levels], dtype=np.float64)
+        SF12_SENSITIVITY = -137  # dBm
 
-        # mask con shape (6, C, N): para cada SF, gateway y dispositivo
-        sf_mask = rssi[np.newaxis, :, :] >= sf_thresholds[:, np.newaxis, np.newaxis]
-
-        first_valid_idx = np.argmax(sf_mask, axis=0)
-        has_coverage = np.any(sf_mask, axis=0)
-        required_sf = np.where(has_coverage, sf_levels[first_valid_idx], 0).astype(np.int8)
-
-        # =========================
-        # Gestión de fallos de gateway (opcional)
-        # =========================
-        # Si un gateway falla, invalida sus enlaces y fuerza reasignación automática
-        # hacia SF más altos en gateways alternativos (si existen).
-        if failed_gateways is not None:
-            failed_idx = np.asarray(failed_gateways, dtype=int)
-            if failed_idx.size > 0:
-                failed_idx = failed_idx[(failed_idx >= 0) & (failed_idx < c)]
-                if failed_idx.size > 0:
-                    required_sf[failed_idx, :] = 0
-
-        # SF asignado por dispositivo tras considerar fallos:
-        # se usa el SF más alto disponible para priorizar conectividad.
-        assigned_sf = np.max(required_sf, axis=0)
-
-        # Criterio de validez de despliegue con RSSI:
-        # sin cobertura si no alcanza ningún gateway ni siquiera con SF12.
-        no_coverage = required_sf == 0
+        no_coverage = (rssi < SF12_SENSITIVITY)
 
         # =========================
         # Penalización distancia
@@ -140,6 +107,14 @@ def cmeans_with_sensitivity(
         dist_adjusted = dist_euclidean.copy()
 
         max_distance = np.sqrt(2) * np.sqrt(AREA_SIZE)
+
+
+
+
+
+
+
+
 
         # Si no hay cobertura → asignar máxima distancia
         dist_adjusted[no_coverage] = max_distance
@@ -166,13 +141,9 @@ def cmeans_with_sensitivity(
             dist_adjusted,
             power
         )
-
         #print(f"jm_val: {jm_val}")
-
         jm = np.hstack((jm, jm_val))
-
         p += 1
-
         # Eq. 9
         if np.linalg.norm(u - u_old) < error:
             break

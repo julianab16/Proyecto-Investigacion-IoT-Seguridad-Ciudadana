@@ -1,306 +1,798 @@
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
-from PIL import Image
-import os
 import csv
+import re
+import os
 
-def guardar_info_nodos_lorawan(archivo_salida, archivo_data):
+# =====================================================================
+# CONFIGURACIÓN
+# =====================================================================
+ESCENARIOS = [ 'Alta','Baja','Media']
+OUT_DIR = 'analisis_metricas_omnet/final1'
 
-    IMAGEN_MAPA = "images/mapa_calor_solo_cali.png"
-    imagen_path = IMAGEN_MAPA
+NODE_SCALARS = {
+    'sentPackets',   
+    'finalSF',      
+    'finalTP',
+    'numSent',
+    'numReceived',
+    'numCollisions',
+    'numRetry',
+    'positionX',      
+    'positionY',
+}
 
-    CALI_MINX = 720414.01
-    CALI_MAXX = 735029.27
-    CALI_MINY = 860572.64
-    CALI_MAXY = 879817.30
+GW_SCALARS = {
+    'GW_forwardedDown',           # LoRaGWMac
+    'GW_droppedDC',               # LoRaGWMac  
+    'DER - Data Extraction Rate', # LoRaGWRadio
+}
 
-    minx = CALI_MINX
-    maxx = CALI_MAXX
-    miny = CALI_MINY
-    maxy = CALI_MAXY
+AGGREGATE_SCALARS = {
+    'LoRa_NS_DER',                # PDR agregado 
+    'totalReceivedPackets',
+    'DER SF7', 'DER SF8', 'DER SF9', 'DER SF10', 'DER SF11', 'DER SF12',
+    'counterUniqueReceivedPacketsPerSF SF7',
+    'counterUniqueReceivedPacketsPerSF SF8',
+    'counterUniqueReceivedPacketsPerSF SF9',
+    'counterUniqueReceivedPacketsPerSF SF10',
+    'counterUniqueReceivedPacketsPerSF SF11',
+    'counterUniqueReceivedPacketsPerSF SF12',
+}
 
-    # Cargar el archivo original para extraer nodos
-    df = pd.read_csv(archivo_data, sep=',', engine='python', quotechar='"', skipinitialspace=True)
-    imagen = Image.open(imagen_path)
-    img_width, img_height = imagen.size
+# Histogramas a extraer
+HISTOGRAMAS = {
+    'receivedRSSI': 'receivedRSSI',   # nombre real en el .sca
+}
 
-    # Filtrar filas de nodos
-    nodos = df[df['module'].str.contains('loRaNodes', na=False)].copy()
-    # Extraer node_id
-    nodos['node_id'] = nodos['module'].str.extract(r'loRaNodes\[(\d+)\]')[0].astype(float)
-    nodos = nodos.dropna(subset=['node_id'])
-    nodos['node_id'] = nodos['node_id'].astype(int)
-    nodos_ids = sorted(nodos['node_id'].unique().tolist())
-    
-    print(f" NODOS ENCONTRADOS: {len(nodos_ids)} nodos")
-    print(f"   IDs: {nodos_ids[:10]}{'...' if len(nodos_ids) > 10 else ''}")
+# =====================================================================
+# UTILIDADES
+# =====================================================================
 
-    matriz = df[df["name"].str.startswith("pkts_node", na=False)][["name", "value"]]
+# =====================================================================
+# TOPOLOGÍA (distancias + SF) — NUEVO
+# =====================================================================
+# Extrae del .sca (exportado a CSV):
+#   meanDistToPickedGW_nodeN     (N = 0..9)
+#   meanDist_nodeN_gwG           (N = 0..9, G = 0..9)
+#   SFcount_nodeN_SFS            (N = 0..9, S = 7..12)
+#   meanSF_nodeN                 (N = 0..9)
+#   distanceGWtoServer_gwG       (G = 0..9)
+# =====================================================================
+MAX_NODES_TOP = 10
+MAX_GWS_TOP   = 10
+SF_RANGE      = range(7, 13)
 
-    # Separar en columnas nodo y gateway
-    matriz["node"] = matriz["name"].str.extract(r"pkts_node(\d+)_gw")
-    matriz["gw"] = matriz["name"].str.extract(r"_gw(\d+)")
-    matriz["value"] = pd.to_numeric(matriz["value"], errors="coerce")
-    matriz = matriz[["node", "gw", "value"]].sort_values(["node", "gw"])
-    
-    print(f"📡 MATRIZ pkts_node: {len(matriz)} registros")
-    print(f"   Nodos únicos en matriz: {matriz['node'].nunique()}")
-    print(f"   Gateways únicos: {matriz['gw'].nunique()}")
 
-    # Extraer gateway_id por nodo 
-    gateway_id_map = {}
-    nodo_id_map = {}
-    pkts_received_map = {}
-    if not matriz.empty:
-        grouped = matriz.dropna(subset=["node", "gw", "value"]).copy()
-        if not grouped.empty:
-            grouped["node"] = grouped["node"].astype(int)
-            grouped["gw"] = grouped["gw"].astype(int)
-            for node_id, group in grouped.groupby("node"):
-                best_row = group.sort_values("value", ascending=False).iloc[0]
-                gateway_id_map[node_id] = int(best_row["gw"])
-                nodo_id_map[node_id] = int(best_row["node"])
-                pkts_received_map[node_id] = best_row["value"]
+def _stats_sobre_runs(df, grupo_cols, col='value'):
+    """
+    Promedia por (run, grupo_cols) y luego agrega mean sobre runs.
+    Devuelve DataFrame con columnas grupo_cols + ['mean'].
+    """
+    if df.empty:
+        return pd.DataFrame(columns=list(grupo_cols) + ['mean'])
+    por_run = df.groupby(['run'] + list(grupo_cols))[col].mean().reset_index()
+    stats = por_run.groupby(list(grupo_cols))[col].agg(['mean']).reset_index()
+    return stats
 
-    def per_node_value(metric, column='value'):
-        sub = nodos[nodos['name'] == metric].copy()
-        if sub.empty:
-            return {}
-        if sub[column].dtype == object:
-            sub[column] = sub[column].astype(str).str.strip()
-            sub[column] = sub[column].str.replace(r"\s+", "", regex=True)
-            sub[column] = sub[column].str.replace(r"[^0-9+\-\.eE]+$", "", regex=True)
 
-        sub[column] = pd.to_numeric(sub[column], errors='coerce')
-        return sub.groupby('node_id')[column].mean().to_dict()
+def extraer_topologia(df, max_nodes=MAX_NODES_TOP, max_gws=MAX_GWS_TOP):
+    """
+    Devuelve dict con 5 listas de tuplas:
+      dist_node_gw   : [(node_id, gw_id, mean), ...]
+      sf_count       : [(node_id, sf, mean), ...]
+      sf_mean        : [(node_id, mean), ...]
+      dist_gw_server : [(gw_id, mean), ...]
+    """
+    out = {
+        'dist_node_gw'   : [],
+        'sf_count'       : [],
+        'sf_mean'        : [],
+        'dist_gw_server' : [],
+    }
 
-    def per_node_v(metric):
-        sub = df[df["name"].str.startswith(metric, na=False)]
-        if sub.empty:
-            return {}
-        values = pd.to_numeric(sub["value"], errors="coerce").dropna().tolist()
-        if not values:
-            return {}
-        return {node_id: values[i] for i, node_id in enumerate(nodos_ids) if i < len(values)}
+    # --- meanDist_nodeN_gwG ---
+    sub = df[df['name'].str.startswith('meanDist_node', na=False)][['run','name','value']].dropna()
+    if not sub.empty:
+        ext = sub['name'].str.extract(r'meanDist_node(\d+)_gw(\d+)')
+        sub['node_id'] = pd.to_numeric(ext[0], errors='coerce')
+        sub['gw_id']   = pd.to_numeric(ext[1], errors='coerce')
+        sub = sub.dropna(subset=['node_id','gw_id'])
+        sub['node_id'] = sub['node_id'].astype(int)
+        sub['gw_id']   = sub['gw_id'].astype(int)
+        sub = sub[(sub['node_id'] < max_nodes) & (sub['gw_id'] < max_gws)]
+        stats = _stats_sobre_runs(sub, ['node_id','gw_id'])
+        for _, r in stats.iterrows():
+            out['dist_node_gw'].append((int(r['node_id']), int(r['gw_id']),
+                                        float(r['mean'])))
 
-    def metric_to_nodes(metric):
-        sub = df[df["name"].str.startswith(metric, na=False)]
-        if sub.empty:
-            return {}
-        values = pd.to_numeric(sub["value"], errors="coerce").dropna().tolist()
-        if not values:
-            return {}
-        return {node_id: values[i] for i, node_id in enumerate(nodos_ids) if i < len(values)}
-    
-    def metric_module(metric, name, column='value'):
-        """
-        Extrae valores SOLO si:
-        - Module CONTIENE 'metric' (ej: 'LoRaWan.loRaGW')
-        - Name ES EXACTO (ej: 'initialX')
-        - El valor NO está vacío/nan
-        
-        Extrae el ID del módulo (ej: [0] de 'LoRaWan.loRaGW[0].mobility')
-        Regresa diccionario {id_extraído: valor_promedio}
-        """
-        # Filtrar por AMBAS condiciones + valor no vacío
-        sub = df[(df['module'].str.contains(metric, na=False, regex=False)) & 
-                 (df['name'] == name) &
-                 (df['type'] == 'param')].copy()
-        
-        # Extraer ID del módulo (ej: [0] de 'LoRaWan.loRaGW[0].mobility')
-        sub['extracted_id'] = sub['module'].str.extract(r'\[(\d+)\]')[0]
-        sub['extracted_id'] = pd.to_numeric(sub['extracted_id'], errors='coerce')
-        
-        
-        # Limpiar y convertir valores - MEJORADO
-        if sub[column].dtype == object:
-            # Convertir a string
-            sub[column] = sub[column].astype(str)
-            # Remover espacios
-            sub[column] = sub[column].str.strip()
-            # Extraer SOLO números, signos y notación científica (elimina unidades como 'm', 'dBm', etc)
-            sub[column] = sub[column].str.extract(r'([+-]?\d+\.?\d*(?:[eE][+-]?\d+)?)', expand=False)
-            
-        sub[column] = pd.to_numeric(sub[column], errors='coerce')
-        result = sub.groupby('extracted_id')[column].mean().to_dict()
 
-        return result
-    
-    def pixeles_a_epsg3116(x_map, y_map):
-        """Convierte diccionarios de píxeles a coordenadas EPSG3116"""
-        x_conv = {}
-        y_conv = {}
-        for node_id in x_map:
-            if node_id in y_map:
-                x_pixel = x_map[node_id] / img_width
-                y_pixel = y_map[node_id] / img_height
-                
-                x_norm = x_pixel
-                y_norm = 1 - y_pixel
-                
-                x_conv[node_id] = (x_norm * (maxx - minx)) + minx
-                y_conv[node_id] = (y_norm * (maxy - miny)) + miny
-        return x_conv, y_conv
-    
-    # Métricas por nodo
-    pos_x_map = per_node_value('positionX')
-    pos_y_map = per_node_value('positionY')
+    # --- meanSF_nodeN ---
+    sub = df[df['name'].str.startswith('meanSF_node', na=False)][['run','name','value']].dropna()
+    if not sub.empty:
+        sub['node_id'] = pd.to_numeric(
+            sub['name'].str.extract(r'meanSF_node(\d+)')[0], errors='coerce')
+        sub = sub.dropna(subset=['node_id'])
+        sub['node_id'] = sub['node_id'].astype(int)
+        sub = sub[sub['node_id'] < max_nodes]
+        stats = _stats_sobre_runs(sub, ['node_id'])
+        for _, r in stats.iterrows():
+            out['sf_mean'].append((int(r['node_id']), float(r['mean'])))
 
-    pos_x_map, pos_y_map = pixeles_a_epsg3116(pos_x_map, pos_y_map)
+    # --- distanceGWtoServer_gwG ---
+    sub = df[df['name'].str.startswith('distanceGWtoServer_gw', na=False)][['run','name','value']].dropna()
+    if not sub.empty:
+        sub['gw_id'] = pd.to_numeric(
+            sub['name'].str.extract(r'distanceGWtoServer_gw(\d+)')[0], errors='coerce')
+        sub = sub.dropna(subset=['gw_id'])
+        sub['gw_id'] = sub['gw_id'].astype(int)
+        sub = sub[sub['gw_id'] < max_gws]
+        stats = _stats_sobre_runs(sub, ['gw_id'])
+        for _, r in stats.iterrows():
+            out['dist_gw_server'].append((int(r['gw_id']), float(r['mean'])))
 
-    sf_map = per_node_value('finalSF') #
-    tp_map = per_node_value('finalTP') #
-    pkts_sent_map = per_node_value('sentPackets') #
-    retransmi_map = per_node_value('numRetry')
-    transmission_map = per_node_value('LoRaTransmissionCreated:count')
-    data_size_map = per_node_value('dataSize')
-    energy = per_node_value('totalEnergyConsumed')
+    return out
 
-    # RSSI/SNR pueden venir como vectores globales
-    rssi_map = metric_to_nodes("rssi_node")
-    snr_map = metric_to_nodes("snir_node")
 
-    # Latencia por nodo: Extraer de endToEndDelay_nodeXXX
-    latency_data = df[df["name"].str.startswith("endToEndDelay_node", na=False)][["name", "value"]].copy()
-    latency_map = {}
-    if not latency_data.empty:
-        # Extraer node_id de "endToEndDelay_nodeXXX"
-        latency_data["node"] = latency_data["name"].str.extract(r"endToEndDelay_node(\d+)")[0]
-        latency_data["value"] = pd.to_numeric(latency_data["value"], errors="coerce")
-        latency_data = latency_data[["node", "value"]].sort_values(["node"])
-        
-        # Agrupar por nodo y obtener valores
-        grouped = latency_data.dropna(subset=["node", "value"]).copy()
-        if not grouped.empty:
-            grouped["node"] = grouped["node"].astype(int)
-            for node_id, group in grouped.groupby("node"):
-                # Tomar el promedio de todos los valores para este nodo
-                latency_map[node_id] = group["value"].mean()
+def guardar_topologia(nombre_cfg, df, carpeta_salida):
+    """
+    Guarda 'topologia_<cfg>.csv' en formato long:
+      tipo,node_id,gw_id,valor
 
-    # Simulated time
-    sim_time_series = df[df['name'] == 'simulated time']['value']
-    sim_time = pd.to_numeric(sim_time_series, errors='coerce').dropna()
-    sim_time = float(sim_time.iloc[0]) 
+    Guarda las distancias nodo-gateway en un CSV independiente:
+      distancia_nodo_gw_<cfg>.csv
+    """
+    topo = extraer_topologia(df)
+    out_path = os.path.join(carpeta_salida, f'topologia_{nombre_cfg}.csv')
+    out_dist_path = os.path.join(
+        carpeta_salida, f'distancia_nodo_gw_{nombre_cfg}.csv'
+    )
 
-    # Throughput por nodo (bytes -> bps) usando la mejor métrica disponible
-    bytes_metrics = [
-        'packetReceived:sum(packetBytes)',
-        'rxPkOk:sum(packetBytes)',
-        'txPk:sum(packetBytes)',
-        'packetSent:sum(packetBytes)'
-    ]
-    bytes_map = {}
-    for metric in bytes_metrics:
-        bytes_map = per_node_value(metric)
-        if bytes_map:
-            break
-    
-    # Llamadas separadas para debug
-    gateway_x_raw = metric_module('LoRaWan.loRaGW', 'initialX')
-    gateway_y_raw = metric_module('LoRaWan.loRaGW', 'initialY')
-    
-    
-    # Convertir de píxeles a EPSG3116 si es necesario
-    gateway_x_map, gateway_y_map = pixeles_a_epsg3116(gateway_x_raw, gateway_y_raw)
+    with open(out_path, 'w', newline='', encoding='utf-8') as f:
+        w = csv.writer(f)
+        w.writerow(['tipo', 'node_id', 'gw_id', 'valor'])
 
-    # Guardar CSV
-    with open(archivo_salida, 'w', newline='', encoding='utf-8') as f:
-        writer = csv.writer(f)
-        writer.writerow(['node_id','x','y','gateway_id', 'gw_x','gw_y', 'distance_m','sf','tp','lambda','PDR','Energy_mJ','Latency_ms'])
-        # Solo usar nodos que tienen información en los mapas de paquetes
-        nodos_con_info = [n for n in nodos_ids if n in nodo_id_map]
-        for node_id in nodos_con_info:
-            x = pos_x_map.get(node_id, np.nan)
-            y = pos_y_map.get(node_id, np.nan)
+        for nid, mean in topo['sf_mean']:
+            w.writerow(['sf_asignado', nid, '', mean])
+        for gid, mean in topo['dist_gw_server']:
+            w.writerow(['dist_gw_server', '', gid, round(mean, 3)])
 
-            # Obtener el gateway asignado a este nodo
-            gw_id = gateway_id_map.get(node_id)
-            gx_node = gateway_x_map.get(gw_id, np.nan)
-            gy_node = gateway_y_map.get(gw_id, np.nan)
-            gx = gx_node 
-            gy = gy_node
+    with open(out_dist_path, 'w', newline='', encoding='utf-8') as f:
+        w = csv.writer(f)
+        w.writerow(['node_id', 'gw_id', 'distancia nodo gw'])
+        for nid, gid, mean in topo['dist_node_gw']:
+            w.writerow([nid, gid, round(mean, 3)])
 
-            if not np.isnan(x) and not np.isnan(y) and not np.isnan(gx) and not np.isnan(gy):
-                distance = float(np.sqrt((x - gx)**2 + (y - gy)**2))
-            else:
-                distance = ''
+    total = len(topo['sf_mean']) + len(topo['dist_gw_server'])
+    print(f"  → {out_path}  ({total} filas)")
+    print(f"  → {out_dist_path}  ({len(topo['dist_node_gw'])} filas)")
+    return topo
 
-            sf_val = sf_map.get(node_id, np.nan)
-            tp_val = tp_map.get(node_id, np.nan)
-            rssi_val = rssi_map.get(node_id, np.nan)
-            snr_val = snr_map.get(node_id, np.nan)
 
-            if not np.isnan(tp_val) and not np.isnan(rssi_val):
-                path_loss = tp_val - rssi_val
-            else:
-                path_loss = ''
+def toa(nombre_cfg, carpeta_salida, csv_in=None):
+    """
+    Extrae 'meanToA_nodeN' del .sca exportado y guarda:
+      toa_nodo_<cfg>.csv con columnas:
+        node_id, toa_ms_mean, toa_ms_std
+    """
+    if csv_in is None:
+        csv_in = f'data_base/results_{nombre_cfg}.csv'
 
-            pkts_sent = pkts_sent_map.get(node_id, np.nan)
-            pkts_received = pkts_received_map.get(node_id, '')
-            #pdr = (pkts_received / pkts_sent * 100) if (pd.notna(pkts_sent) and pkts_sent > 0) else ''
+    df = cargar_csv(csv_in)
 
-            data_size = data_size_map.get(node_id, np.nan)
-            if pd.notna(data_size) and pd.notna(pkts_sent) and sim_time > 0:
-                throughput = (pkts_sent * data_size * 8) / sim_time
-            else:
-                bytes_val = bytes_map.get(node_id, np.nan)
-                throughput = (bytes_val * 8 / sim_time) if pd.notna(bytes_val) and sim_time > 0 else ''
+    sub = df[df['name'].str.startswith('meanToA_node', na=False)][['run','name','value']].dropna()
 
-            transmission_count = transmission_map.get(node_id, np.nan)
-            if pd.notna(sf_val):
-                sf_int = int(sf_val)
-                toa_map = {7: 0.041, 8: 0.082, 9: 0.165, 10: 0.330, 11: 0.659, 12: 1.318}
-                toa = toa_map.get(sf_int, 0.5)
-            else:
-                toa = 0.5
-            duty_cicle = (transmission_count * toa / sim_time) * 100 if pd.notna(transmission_count) and sim_time > 0 else ''
+    sub['node_id'] = pd.to_numeric(
+        sub['name'].str.extract(r'meanToA_node(\d+)')[0], errors='coerce')
+    sub = sub.dropna(subset=['node_id'])
+    sub['node_id'] = sub['node_id'].astype(int)
+    sub = sub[sub['node_id'] < MAX_NODES_TOP]
 
-            retransmi = retransmi_map.get(node_id, '')
-            latency_val = latency_map.get(node_id, '')
-            
-            # ===== CÁLCULOS SIMILARES A nsga.py (pero adaptados a datos del CSV) =====
-            pdr = ''
-            energy_mj = ''
-            latency_ms = ''
-            
-            # Máximo energía teórico (SF12, TP27, λ=100)
-            MAX_ENERGY_MJ = 51 * 0.001 * 2.0 * 2.0 * 100  # = 20.4 mJ
-            
-            # 1. PDR: Usar paquetes reales del CSV cuando esté disponible
-            if pd.notna(pkts_sent) and pkts_sent > 0 and pkts_received != '':
-                pdr = (pkts_received / pkts_sent)
-            else:
-                pdr = ''
-            
-            # 2. Energy_mJ
-            energy_mj = energy.get(node_id, np.nan)
+    # meanToA ya viene en segundos → a ms
+    sub['value_ms'] = sub['value'] * 1000.0
 
-            # 3. Latency_ms: Usar del CSV cuando esté disponible, si no usar SF_latency como base
-            if latency_val != '' and latency_val is not None:
-                latency_ms = latency_val * 1000
-            else:
-                latency_ms = ''
+    stats = _stats_sobre_runs(sub, ['node_id'], col='value_ms')
 
-            writer.writerow([
-                nodo_id_map.get(node_id, ''),
-                x,
-                y,
-                gateway_id_map.get(node_id, ''),
-                gx,
-                gy,
-                distance,
-                sf_val if pd.notna(sf_val) else '',
-                tp_val if pd.notna(sf_val) else '',
-                pkts_sent if pd.notna(pkts_sent) else '',
-                round(pdr, 4) if isinstance(pdr, float) else pdr,
-                round(energy_mj, 4) if isinstance(energy_mj, float) else energy_mj,
-                round(latency_ms, 4) if isinstance(latency_ms, (float, int)) else latency_ms
+    out_path = os.path.join(carpeta_salida, f'toa_nodo_{nombre_cfg}.csv')
+    with open(out_path, 'w', newline='', encoding='utf-8') as f:
+        w = csv.writer(f)
+        w.writerow(['node_id', 'toa_ms_mean'])
+        for _, r in stats.sort_values('node_id').iterrows():
+            nid = int(r['node_id'])
+            w.writerow([
+                nid,
+                round(float(r['mean']), 4),
             ])
 
+    print(f"  → {out_path}  ({len(stats)} nodos)")
+
+def delay(nombre_cfg, carpeta_salida, csv_in=None):
+    """
+    Extrae 'endToEndDelay_nodeN' del .sca exportado y guarda:
+      delay_nodo_<cfg>.csv con columnas:
+        node_id, delay_ms_mean
+    """
+    if csv_in is None:
+        csv_in = f'data_base/results_{nombre_cfg}.csv'
+    if not os.path.exists(csv_in):
+        print(f"  [delay] No existe {csv_in}")
+        return
+
+    df = cargar_csv(csv_in)
+
+    sub = df[df['name'].str.startswith('endToEndDelay_node', na=False)][['run','name','value']].dropna()
+
+    sub['node_id'] = pd.to_numeric(
+        sub['name'].str.extract(r'endToEndDelay_node(\d+)')[0], errors='coerce')
+    sub = sub.dropna(subset=['node_id'])
+    sub['node_id'] = sub['node_id'].astype(int)
+    sub = sub[sub['node_id'] < MAX_NODES_TOP]
+
+    # endToEndDelay ya viene en segundos → a ms
+    sub['value_ms'] = sub['value'] * 1000.0
+
+    stats = _stats_sobre_runs(sub, ['node_id'], col='value_ms')
+
+    out_path = os.path.join(carpeta_salida, f'delay_nodo_{nombre_cfg}.csv')
+    with open(out_path, 'w', newline='', encoding='utf-8') as f:
+        w = csv.writer(f)
+        w.writerow(['node_id', 'delay_ms_mean'])
+        for _, r in stats.sort_values('node_id').iterrows():
+            nid = int(r['node_id'])
+            w.writerow([
+                nid,
+                round(float(r['mean']), 4),
+            ])
+
+    print(f"  → {out_path}  ({len(stats)} nodos)")
+
+def _normalizar_run(df):
+    """
+    Extrae el número de run desde la columna 'run'.
+    OMNeT++ 6.0 con opp_scavetool exporta run como entero (0,1,2...)
+    o como string tipo 'config-run-0-...'. Manejo ambos.
+    """
+    if 'run' not in df.columns:
+        df['run'] = 0
+        return df
+    s = df['run'].astype(str)
+    # Caso entero puro
+    m = s.str.fullmatch(r'\d+')
+    if m.all():
+        df['run'] = s.astype(int)
+        return df
+    # Caso string con guiones
+    extracted = s.str.extract(r'-(\d+)-')[0]
+    df['run'] = pd.to_numeric(extracted, errors='coerce').fillna(0).astype(int)
+    return df
+
+
+def _to_float(x):
+    """Extrae el primer float de un string tipo '1.23 dBm' o '1.23e-4'."""
+    if pd.isna(x):
+        return np.nan
+    if isinstance(x, (int, float)):
+        return float(x)
+    m = re.search(r'[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?', str(x))
+    return float(m.group(0)) if m else np.nan
+
+
+def _promedio_sobre_runs(df, grupo, col='value'):
+    """
+    1) Promedia por (run, grupo) → 1 valor por run
+    Devuelve dict[grupo] -> (mean)
+    """
+    if df.empty:
+        return {}
+    por_run = df.groupby(['run', grupo])[col].mean().reset_index()
+    stats = por_run.groupby(grupo)[col].agg(['mean', 'std'])
+    return {idx: (row['mean'], row['std'] if pd.notna(row['std']) else 0.0)
+            for idx, row in stats.iterrows()}
+
+
+# =====================================================================
+# CARGA
+# =====================================================================
+def cargar_csv(path):
+    df = pd.read_csv(path, sep=',', engine='python',
+                     quotechar='"', skipinitialspace=True)
+    df.columns = df.columns.str.strip().str.lower()
+    if 'value' in df.columns:
+        df['value'] = df['value'].apply(_to_float)
+    df = _normalizar_run(df)
+    return df
+
+
+# =====================================================================
+# MÉTRICAS POR NODO (índice NED real)
+# =====================================================================
+def extraer_metricas_server_por_nodo(df):
+    """
+    Extrae scalars del NetworkServer con nombre dinámico:
+      rssi_node<N>, snir_node<N>, pkts_node<N>_gw<G>
+    ASUMEN que el patch macToNedIndex está aplicado (N = ID NED).
+    Devuelve dict[node_id] -> dict[metric] = (mean, std)
+    """
+    out = {}
+
+    # --- rssi_node<N> y snir_node<N> ---
+    for pref, key in [('rssi_node', 'rssi_dBm'),
+                      ('snir_node', 'snir_dB')]:
+        sub = df[df['name'].str.startswith(pref, na=False)][['run', 'name', 'value']].copy()
+        if sub.empty:
+            continue
+        sub['node_id'] = pd.to_numeric(
+            sub['name'].str.extract(rf'{pref}(\d+)')[0], errors='coerce')
+        sub = sub.dropna(subset=['node_id', 'value'])
+        if sub.empty:
+            continue
+        sub['node_id'] = sub['node_id'].astype(int)
+        stats = _promedio_sobre_runs(sub, 'node_id')
+        for nid, (mean, std) in stats.items():
+            out.setdefault(nid, {})[key] = (mean, std)
+
+    # --- pkts_node<N>_gw<G>: sumar sobre GWs por (run, nodo) ---
+    sub = df[df['name'].str.startswith('pkts_node', na=False)][['run', 'name', 'value']].copy()
+    if not sub.empty:
+        sub['node_id'] = pd.to_numeric(
+            sub['name'].str.extract(r'pkts_node(\d+)_gw')[0], errors='coerce')
+        sub = sub.dropna(subset=['node_id', 'value'])
+        if not sub.empty:
+            sub['node_id'] = sub['node_id'].astype(int)
+            # sumar sobre GWs por (run, nodo), luego promediar sobre runs
+            por_run = sub.groupby(['run', 'node_id'])['value'].sum().reset_index()
+            stats = por_run.groupby('node_id')['value'].agg(['mean', 'std'])
+            for nid, row in stats.iterrows():
+                out.setdefault(nid, {})['packets_received'] = (
+                    row['mean'], row['std'] if pd.notna(row['std']) else 0.0)
+
+    return out
+
+def extraer_metricas_por_nodo(df):
+    """
+    Solo scalars que viven en módulos loRaNodes[N] con N = índice NED.
+    Devuelve dict[node_id] -> dict[metric] = (mean, std)
+    """
+    nodos = df[df['module'].str.contains('loRaNodes', na=False, regex=False)].copy()
+    if nodos.empty:
+        return {}
+    nodos['node_id'] = pd.to_numeric(
+        nodos['module'].str.extract(r'loRaNodes\[(\d+)\]')[0],
+        errors='coerce'
+    )
+    nodos = nodos.dropna(subset=['node_id'])
+    nodos['node_id'] = nodos['node_id'].astype(int)
+
+    resultado = {}
+    for metric in NODE_SCALARS:
+        sub = nodos[nodos['name'].str.strip() == metric][['run', 'node_id', 'value']].copy()
+        sub = sub.dropna(subset=['value'])
+        if sub.empty:
+            continue
+        stats = _promedio_sobre_runs(sub, 'node_id')
+        for nid, (mean, std) in stats.items():
+            resultado.setdefault(nid, {})[metric] = (mean, std)
+    return resultado
+
+# =====================================================================
+# MÉTRICAS POR GATEWAY
+# =====================================================================
+def extraer_metricas_por_gw(df):
+    """
+    Extrae scalars de módulos loRaGW[G].
+    Devuelve dict[gw_id] -> dict[metric] = (mean, std)
+    """
+    gws = df[df['module'].str.contains('loRaGW', na=False, regex=False)].copy()
+    if gws.empty:
+        return {}
+    gws['gw_id'] = pd.to_numeric(
+        gws['module'].str.extract(r'loRaGW\[(\d+)\]')[0],
+        errors='coerce'
+    )
+    gws = gws.dropna(subset=['gw_id'])
+    gws['gw_id'] = gws['gw_id'].astype(int)
+
+    resultado = {}
+    for metric in GW_SCALARS:
+        sub = gws[gws['name'].str.strip() == metric][['run', 'gw_id', 'value']].copy()
+        sub = sub.dropna(subset=['value'])
+        if sub.empty:
+            continue
+        stats = _promedio_sobre_runs(sub, 'gw_id')
+        for gid, (mean, std) in stats.items():
+            resultado.setdefault(gid, {})[metric] = (mean, std)
+    return resultado
+
+
+# =====================================================================
+# MÉTRICAS AGREGADAS (server)
+# =====================================================================
+def extraer_metricas_agregadas(df):
+    """
+    Scalars únicos por run. Devuelve dict[metric] = (mean, std) sobre runs.
+    """
+    resultado = {}
+    for metric in AGGREGATE_SCALARS:
+        sub = df[df['name'].str.strip() == metric][['run', 'value']].copy()
+        sub = sub.dropna(subset=['value'])
+        if sub.empty:
+            continue
+        # Si hay múltiples filas por run (no debería), promediamos
+        por_run = sub.groupby('run')['value'].mean()
+        resultado[metric] = (por_run.mean(),
+                             por_run.std() if len(por_run) > 1 else 0.0)
+    return resultado
+
+
+# =====================================================================
+# ToA (Semtech SX1272)
+# =====================================================================
+def calcular_toa(sf, bw=125e3, cr=1, payload_bytes=20,
+                 preamble_symbols=8, header_enabled=True,
+                 crc=True, low_data_rate_optimize=None):
+    """
+    bw en Hz, cr = 1..4 (representa 4/5, 4/6, 4/7, 4/8).
+    Fórmula oficial Semtech.
+    """
+    if low_data_rate_optimize is None:
+        low_data_rate_optimize = 1 if (bw == 125e3 and sf >= 11) else 0
+    t_sym = (2 ** sf) / bw
+    t_preamble = (preamble_symbols + 4.25) * t_sym
+    # payloadSymbNb
+    numerator = 8 * payload_bytes - 4 * sf + 28 + 16 * (1 if crc else 0) \
+                - 20 * (0 if header_enabled else 1)
+    denominator = 4 * (sf - 2 * low_data_rate_optimize)
+    n_payload = 8 + max(np.ceil(numerator / denominator) * (cr + 4), 0)
+    return t_preamble + n_payload * t_sym
+
+
+# =====================================================================
+# HISTOGRAMAS
+# =====================================================================
+def extraer_histograma(archivo_csv, archivo_salida, nombre_hist='receivedRSSI'):
+    """
+    Extrae histograma desde CSV de opp_scavetool.
+    - Convierte binvalues a float (no int).
+    - Maneja N+1 edges vs N counts.
+    - Normaliza a DENSIDAD por run antes de agregar.
+    """
+    if not os.path.exists(archivo_csv):
+        print(f"  [hist] No existe: {archivo_csv}")
+        return None
+
+    filas = []
+    n_hist = 0
+
+    with open(archivo_csv, 'r', encoding='utf-8', errors='replace') as f:
+        reader = csv.reader(f)
+        header = next(reader, None)
+        if header is None:
+            return None
+        header = [h.strip().lower() for h in header]
+
+        try:
+            idx_run    = header.index('run')
+            idx_type   = header.index('type')
+            idx_name   = header.index('name')
+            idx_edges  = header.index('binedges')
+            idx_values = header.index('binvalues')
+        except ValueError as e:
+            print(f"  [hist] Faltan columnas: {e}")
+            return None
+
+        for row in reader:
+            if len(row) <= max(idx_run, idx_type, idx_name, idx_edges, idx_values):
+                continue
+            if row[idx_type].strip() != 'histogram':
+                continue
+            if row[idx_name].strip() != nombre_hist:
+                continue
+
+            run_id = row[idx_run]
+            m = re.search(r'-(\d+)-', run_id)
+            run_num = int(m.group(1)) if m else (int(run_id) if run_id.isdigit() else n_hist)
+
+            edges_str  = row[idx_edges].strip().strip('"')
+            values_str = row[idx_values].strip().strip('"')
+
+            edges  = [float(x) for x in edges_str.split()  if x]
+            counts = [float(x) for x in values_str.split() if x]
+
+            # Validación: N bins requieren N+1 edges
+            if len(edges) == len(counts) + 1:
+                pass
+            elif len(edges) == len(counts):
+                print(f"  [hist] Warning: {len(edges)} edges y {len(counts)} counts. "
+                      f"Falta último edge en run {run_num}.")
+                edges = edges + [edges[-1]]
+            else:
+                print(f"  [hist] SKIP mal formado: {len(edges)} edges / {len(counts)} counts")
+                continue
+
+            total = sum(counts) if sum(counts) > 0 else 1.0
+            for i, c in enumerate(counts):
+                ancho = edges[i + 1] - edges[i]
+                if ancho <= 0:
+                    continue
+                densidad = c / (total * ancho)
+                filas.append((run_num, edges[i], edges[i + 1], densidad, c))
+
+            n_hist += 1
+
+    if not filas:
+        print(f"  [hist] No se encontró '{nombre_hist}' en {archivo_csv}")
+        return None
+
+    df = pd.DataFrame(filas, columns=['run', 'bin_low', 'bin_high', 'densidad', 'count'])
+    agg = (df.groupby(['bin_low', 'bin_high'])
+             .agg(densidad_mean=('densidad', 'mean'),
+                  densidad_std=('densidad', 'std'),
+                  count_mean=('count', 'mean'),
+                  n_runs=('run', 'nunique'))
+             .reset_index())
+    agg['densidad_std'] = agg['densidad_std'].fillna(0.0)
+
+    agg.to_csv(archivo_salida, index=False)
+    print(f"  [hist] {nombre_hist}: {n_hist} runs, {len(agg)} bins → {archivo_salida}")
+    return df
+
+
+# =====================================================================
+# GUARDADO
+# =====================================================================
+def guardar_metricas_escenario(nombre_cfg, archivo_data, carpeta_salida):
+    print(f"\n=== Escenario: {nombre_cfg} ===")
+    df = cargar_csv(archivo_data)
+    print(f"  Filas: {len(df)} | Runs: {df['run'].nunique()}")
+
+    # --- Métricas por nodo (NED index real) ---
+    por_nodo = extraer_metricas_por_nodo(df)
+    por_nodo_server = extraer_metricas_server_por_nodo(df)
+    for nid, metrics in por_nodo_server.items():
+        por_nodo.setdefault(nid, {}).update(metrics)
+
+    out_nodo = os.path.join(carpeta_salida, f'metricas_nodo_{nombre_cfg}.csv')
+    with open(out_nodo, 'w', newline='', encoding='utf-8') as f:
+        w = csv.writer(f)
+        w.writerow([
+            'node_id',
+            'positionX', 'positionY',
+            'packets_sent_mean', 'packets_sent_std',
+            'packets_received_mean', 'packets_received_std',
+            'rssi_dBm_mean', 'rssi_dBm_std',
+            'snir_dB_mean', 'snir_dB_std',
+            'finalSF_mean', 'finalSF_std',
+            'finalTP_mean', 'finalTP_std',
+            'mac_numSent_mean', 'mac_numSent_std',
+            'mac_numReceived_mean', 'mac_numReceived_std',
+            'mac_numCollisions_mean', 'mac_numCollisions_std',
+            'mac_numRetry_mean', 'mac_numRetry_std',
+            'toa_ms_from_finalSF',
+        ])
+        for nid in sorted(por_nodo.keys()):
+            m = por_nodo[nid]
+            def g(k):
+                return m.get(k, (np.nan, np.nan))
+
+            sf_mean, sf_std = g('finalSF')
+            toa_ms = round(calcular_toa(int(round(sf_mean))) * 1000, 4) \
+                    if pd.notna(sf_mean) else ''
+
+            pos_x = g('positionX')[0]
+            pos_y = g('positionY')[0]
+
+            w.writerow([
+                nid,
+                round(pos_x, 3) if pd.notna(pos_x) else '',
+                round(pos_y, 3) if pd.notna(pos_y) else '',
+                round(g('sentPackets')[0], 3) if pd.notna(g('sentPackets')[0]) else '',
+                round(g('sentPackets')[1], 3) if pd.notna(g('sentPackets')[1]) else '',
+                round(g('packets_received')[0], 3) if pd.notna(g('packets_received')[0]) else '',
+                round(g('packets_received')[1], 3) if pd.notna(g('packets_received')[1]) else '',
+                round(g('rssi_dBm')[0], 3) if pd.notna(g('rssi_dBm')[0]) else '',
+                round(g('rssi_dBm')[1], 3) if pd.notna(g('rssi_dBm')[1]) else '',
+                round(g('snir_dB')[0], 3) if pd.notna(g('snir_dB')[0]) else '',
+                round(g('snir_dB')[1], 3) if pd.notna(g('snir_dB')[1]) else '',
+                round(sf_mean, 3) if pd.notna(sf_mean) else '',
+                round(sf_std, 3) if pd.notna(sf_std) else '',
+                round(g('finalTP')[0], 3) if pd.notna(g('finalTP')[0]) else '',
+                round(g('finalTP')[1], 3) if pd.notna(g('finalTP')[1]) else '',
+                round(g('numSent')[0], 3) if pd.notna(g('numSent')[0]) else '',
+                round(g('numSent')[1], 3) if pd.notna(g('numSent')[1]) else '',
+                round(g('numReceived')[0], 3) if pd.notna(g('numReceived')[0]) else '',
+                round(g('numReceived')[1], 3) if pd.notna(g('numReceived')[1]) else '',
+                round(g('numCollisions')[0], 3) if pd.notna(g('numCollisions')[0]) else '',
+                round(g('numCollisions')[1], 3) if pd.notna(g('numCollisions')[1]) else '',
+                round(g('numRetry')[0], 3) if pd.notna(g('numRetry')[0]) else '',
+                round(g('numRetry')[1], 3) if pd.notna(g('numRetry')[1]) else '',
+                toa_ms,
+            ])
+    print(f"  → {out_nodo}  ({len(por_nodo)} nodos)")
+
+    # --- Métricas por gateway ---
+    por_gw = extraer_metricas_por_gw(df)
+    out_gw = os.path.join(carpeta_salida, f'metricas_gw_{nombre_cfg}.csv')
+    with open(out_gw, 'w', newline='', encoding='utf-8') as f:
+        w = csv.writer(f)
+        w.writerow([
+            'gw_id',
+            'GW_forwardedDown_mean', 'GW_forwardedDown_std',
+            'GW_droppedDC_mean', 'GW_droppedDC_std',
+            'DER_radio_mean', 'DER_radio_std',
+        ])
+        for gid in sorted(por_gw.keys()):
+            m = por_gw[gid]
+            def g(k):
+                return m.get(k, (np.nan, np.nan))
+            w.writerow([
+                gid,
+                round(g('GW_forwardedDown')[0], 3) if pd.notna(g('GW_forwardedDown')[0]) else '',
+                round(g('GW_forwardedDown')[1], 3) if pd.notna(g('GW_forwardedDown')[1]) else '',
+                round(g('GW_droppedDC')[0], 3) if pd.notna(g('GW_droppedDC')[0]) else '',
+                round(g('GW_droppedDC')[1], 3) if pd.notna(g('GW_droppedDC')[1]) else '',
+                round(g('DER - Data Extraction Rate')[0], 4) if pd.notna(g('DER - Data Extraction Rate')[0]) else '',
+                round(g('DER - Data Extraction Rate')[1], 4) if pd.notna(g('DER - Data Extraction Rate')[1]) else '',
+            ])
+    print(f"  {out_gw}  ({len(por_gw)} gateways)")
+
+    # --- Métricas agregadas (server) ---
+    agg = extraer_metricas_agregadas(df)
+    out_agg = os.path.join(carpeta_salida, f'metricas_agregadas_{nombre_cfg}.csv')
+    with open(out_agg, 'w', newline='', encoding='utf-8') as f:
+        w = csv.writer(f)
+        w.writerow(['metric', 'mean', 'std'])
+        # Orden fijo para legibilidad
+        for metric in sorted(agg.keys()):
+            mean, std = agg[metric]
+            w.writerow([metric, round(mean, 6), round(std, 6)])
+    print(f"  → {out_agg}  ({len(agg)} métricas)")
+
+    # --- Totales agregados por escenario (QoS) ---
+    totales = extraer_totales_escenario(df)
+    der_plr_runs = calcular_der_plr_por_run(df)
+    out_der_plr = os.path.join(
+        carpeta_salida, f'der_plr_por_run_{nombre_cfg}.csv'
+    )
+    der_plr_runs.to_csv(out_der_plr, index=False, float_format='%.9f')
+    print(f"  → {out_der_plr}  ({len(der_plr_runs)} ejecuciones)")
+
+    out_tot = os.path.join(carpeta_salida, f'totales_{nombre_cfg}.csv')
+    with open(out_tot, 'w', newline='', encoding='utf-8') as f:
+        w = csv.writer(f)
+        w.writerow(['metric', 'mean', 'std'])
+        for k in sorted(totales.keys()):
+            mean, std = totales[k]
+            w.writerow([k, round(mean, 6), round(std, 6)])
+    print(f"  → {out_tot}  ({len(totales)} métricas)")
+
+    guardar_topologia(nombre_cfg, df, carpeta_salida)
+    toa(nombre_cfg, carpeta_salida, csv_in=archivo_data)
+    delay(nombre_cfg, carpeta_salida, csv_in=archivo_data)
+
+    return {'por_nodo': por_nodo, 'por_gw': por_gw,
+            'agregadas': agg, 'totales': totales}
+
+# =====================================================================
+# TOTALES AGREGADOS POR ESCENARIO (QoS)
+# =====================================================================
+def calcular_der_plr_por_run(df):
+    """
+    Usa directamente el DER calculado por OMNeT++ para cada ejecución.
+    """
+    sub = df[
+        df['name'].str.strip() == 'LoRa_NS_DER'
+    ][['run', 'value']].dropna()
+    if sub.empty:
+        return pd.DataFrame(columns=['run', 'DER', 'PLR'])
+
+    resultado = (
+        sub.groupby('run', as_index=False)['value']
+        .mean()
+        .rename(columns={'value': 'DER'})
+    )
+    resultado['PLR'] = 1.0 - resultado['DER']
+    return resultado[['run', 'DER', 'PLR']]
+
+
+def extraer_totales_escenario(df):
+    """
+    Agregados de red por escenario. Devuelve dict[metric] = (mean, std).
+    """
+    out = {}
+
+    def suma_sobre(df_in, filtro_module, filtro_name):
+        sub = df_in[
+            df_in['module'].str.contains(filtro_module, na=False, regex=False)
+            & (df_in['name'].str.strip() == filtro_name)
+        ][['run', 'value']].dropna()
+        if sub.empty:
+            return None
+        por_run = sub.groupby('run')['value'].sum()
+        return (por_run.mean(),
+                por_run.std() if len(por_run) > 1 else 0.0)
+
+    def media_sobre(df_in, filtro_name):
+        sub = df_in[df_in['name'].str.strip() == filtro_name][['run', 'value']].dropna()
+        if sub.empty:
+            return None
+        por_run = sub.groupby('run')['value'].mean()
+        return (por_run.mean(),
+                por_run.std() if len(por_run) > 1 else 0.0)
+
+    def estadisticas(serie):
+        return (
+            serie.mean(),
+            serie.std() if len(serie) > 1 else 0.0,
+        )
+
+    out['total_sent']          = suma_sobre(df, 'loRaNodes', 'sentPackets')
+    out['total_collisions']      = suma_sobre(df, 'loRaNodes', 'numCollisions')
+    out['total_dropped_DC']    = suma_sobre(df, 'loRaGW',    'GW_droppedDC')
+    out['total_received_uniq'] = media_sobre(df, 'totalReceivedPackets')
+    out['DER_global']          = media_sobre(df, 'LoRa_NS_DER')
+    out['PDR_global']          = out['DER_global']
+
+    der_plr_runs = calcular_der_plr_por_run(df)
+    if not der_plr_runs.empty:
+        out['PLR_global'] = estadisticas(der_plr_runs['PLR'])
+
+    # Mean Delay end-to-end (viene en SEGUNDOS → a ms)
+    sub = df[df['name'].str.startswith('endToEndDelay_node', na=False)][['run', 'name', 'value']].dropna()
+    if not sub.empty:
+        por_run = sub.groupby('run')['value'].mean() * 1000.0
+
+        out['mean_delay_ms'] = (
+            por_run.mean(),
+            por_run.std() if len(por_run) > 1 else 0.0
+        )
+        out['n_nodos_con_delay'] = (sub['name'].nunique(), 0.0)
+
+    sub2 = df[df['name'].str.startswith('meanToA_node', na=False)][['run', 'name', 'value']].dropna()
+    if not sub2.empty:
+        por_ru = sub2.groupby('run')['value'].mean() * 1000.0
+
+        out['mean_toa'] = (
+            por_ru.mean(),
+            por_ru.std() if len(por_ru) > 1 else 0.0
+        )
+        out['n_nodos_toa'] = (sub2['name'].nunique(), 0.0)
+
+        nodos_sf = df[
+        df['module'].str.contains('loRaNodes', na=False, regex=False) & 
+        (df['name'].str.strip() == 'finalSF')
+    ][['run', 'value']].dropna()
+
+    if not nodos_sf.empty:
+        # 2. Promediamos el SF de todos los nodos para cada run
+        sf_por_run = nodos_sf.groupby('run')['value'].mean()
+        # 3. Calculamos la media y desviación estándar entre todas las runs
+        out['mean_final_SF'] = (
+            sf_por_run.mean(),
+            sf_por_run.std() if len(sf_por_run) > 1 else 0.0
+        )
+
+    return {k: v for k, v in out.items() if v is not None}
+
+# =====================================================================
+# MAIN
+# =====================================================================
 if __name__ == "__main__":
+    os.makedirs(f'{OUT_DIR}/por_nodo', exist_ok=True)
+    os.makedirs(f'{OUT_DIR}/histogramas', exist_ok=True)
 
-    # Guardar solo la información de resultado1p
-    guardar_info_nodos_lorawan('optimizacion_nodos/comparacion/nodos_lorawan_ga.csv', "data_base/resultsga.csv")
+    for cfg in ESCENARIOS:
+        # Mismo nombre para conRiesgo / sinRiesgo
+        for sufijo in ["sinRiesgo", "conRiesgo"]:
+            nombre_archivo = f'{cfg}{sufijo}'
+            csv_in = f'data_base/results_{nombre_archivo}.csv'
 
-    
+            guardar_metricas_escenario(
+                nombre_archivo, csv_in, f'{OUT_DIR}/por_nodo'
+            )
+
+            # Histograma de RSSI
+            extraer_histograma(
+                csv_in,
+                f'{OUT_DIR}/histogramas/rssi_{nombre_archivo}.csv',
+                nombre_hist='receivedRSSI'
+            )

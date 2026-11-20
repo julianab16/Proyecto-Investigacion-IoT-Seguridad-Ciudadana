@@ -8,11 +8,9 @@ Fórmulas implementadas (según documento DPLACE):
   s(j)    = std(j) * sqrt(1 + 1/B)                           [error de simulación]
   Criterio: seleccionar menor j donde Gap(j) >= Gap(j+1) − s(j+1)
 """
-
 import numpy as np
 import pandas as pd
 from cluster.fuzzycmeans.cmeans_algorithm import cmeans_with_sensitivity
-
 
 def gap_statistics_fuzzy(data, nrefs, AREA_SIZE):
     """
@@ -20,7 +18,6 @@ def gap_statistics_fuzzy(data, nrefs, AREA_SIZE):
     Implementa el criterio original: menor j tal que Gap(j) >= Gap(j+1) - s(j+1).
     Versión vectorizada con NumPy para mayor eficiencia.
     """
-
     #n_samples = data.shape[0]
     #maxClusters = int(np.sqrt(n_samples))
     #maxClusters = max(2, maxClusters)
@@ -36,23 +33,12 @@ def gap_statistics_fuzzy(data, nrefs, AREA_SIZE):
     std_j = np.zeros(maxClusters)
     gaps_sks = np.zeros(maxClusters)
 
-    data_min = data.min(axis=0)
-    data_max = data.max(axis=0)
-    rng = np.random.default_rng(42)
-
-    # Para cada número de clusters k (asegurar k <= n_samples para K-Means)
     for idx, c in enumerate(n_clusters_range):
-        # --- 1. Generar B referencias aleatorias y calcular sus inertias ---
+        # Array para almacenar los log(J*_jb) de las B referencias
         log_refs = np.zeros(nrefs)
-
+        # Generar y procesar cada conjunto de referencia
         for i in range(nrefs):
-
-            random_ref = rng.uniform(
-                low=data_min,
-                high=data_max,
-                size=data.shape
-            )
-
+            random_ref = np.random.uniform(low=0, high=AREA_SIZE, size=data.shape)
             # Calcular FCM sobre referencia (transponer para cmeans)
             _, _, _, _, jm, _, _ = cmeans_with_sensitivity(
                                         data=random_ref.T,
@@ -87,7 +73,6 @@ def gap_statistics_fuzzy(data, nrefs, AREA_SIZE):
         # Desviación estándar (ddof=0 porque es población)
         std_j[idx] = np.std(log_refs, ddof=0)
         s_errors[idx] = std_j[idx] * np.sqrt(1 + 1 / nrefs)
-
 
     """ # Selección del k óptimo según Ecuación (5)
         valid_clusters = {}

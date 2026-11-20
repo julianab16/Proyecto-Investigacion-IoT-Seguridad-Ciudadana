@@ -79,7 +79,7 @@ def processing(
     
     all_gw_data = np.vstack(all_gateways)   # shape (N_total, 3)
 
-    maxClusters = 30
+    maxClusters = 25
     #maxClusters = min(maxClusters, len(all_gw_data))
     
     if verbose:
@@ -108,7 +108,7 @@ def processing(
     # Los centroides C_k son las posiciones finales de los gateways (3D).
 
     # Ec.(10): K-Means minimiza J_k = Σ_k Σ_j ||GW_j^(k) − C_k||^2 (con z)
-    km = KMeans(n_clusters=k_optimal, n_init=250, max_iter=500, random_state=42)
+    km = KMeans(n_clusters=k_optimal, n_init=250, max_iter=600, random_state=42)
     km.fit(all_gw_data)
     final_gateways = km.cluster_centers_   # C_k: posiciones óptimas (K, 3), shape (K, 3)
     labels         = km.labels_

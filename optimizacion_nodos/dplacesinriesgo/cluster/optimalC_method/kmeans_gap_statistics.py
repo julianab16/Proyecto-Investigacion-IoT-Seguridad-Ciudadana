@@ -46,7 +46,7 @@ def gap_statistics_kmeans(data, nrefs, maxClusters):
     """
 
     n_samples = data.shape[0]
-    actual_max_k = min(maxClusters, n_samples)  # K-Means: n_clusters <= n_samples
+    actual_max_k = maxClusters
     n_clusters_range = np.arange(1, actual_max_k+1)
 
     print(f"  [Processing] n_samples={n_samples}, maxClusters={maxClusters}, actual_max_k={actual_max_k}")
@@ -67,9 +67,7 @@ def gap_statistics_kmeans(data, nrefs, maxClusters):
     for idx, k in enumerate(range(1, actual_max_k + 1)):
         # --- 1. Generar B referencias aleatorias y calcular sus inertias ---
         inertias_ref = np.zeros(nrefs)
-
         for i in range(nrefs):
-  
             random_ref = rng.uniform(
                 low=data_min,
                 high=data_max,
@@ -78,7 +76,7 @@ def gap_statistics_kmeans(data, nrefs, maxClusters):
             if k == 1:
                 inertias_ref[i] = np.sum((random_ref - random_ref.mean(axis=0))**2)
             else:
-                km = KMeans(n_clusters=k, n_init=10, max_iter=300, random_state=i)
+                km = KMeans(n_clusters=k, n_init=5, max_iter=300, random_state=i)
                 km.fit(random_ref)
                 inertias_ref[i] = km.inertia_
         
@@ -102,7 +100,7 @@ def gap_statistics_kmeans(data, nrefs, maxClusters):
     
     # Selección del k óptimo según Ecuación (5)
     optimal_k = None
-    for idx in range(10, len(gaps) - 1):
+    for idx in range(9, len(gaps) - 1):
         # Verificar criterio: Gap(j) >= Gap(j+1) - s(j+1)
         if gaps[idx] >= gaps[idx + 1] - s_errors[idx + 1]:  # ← CRITERIO REAL
             optimal_k = idx + 1

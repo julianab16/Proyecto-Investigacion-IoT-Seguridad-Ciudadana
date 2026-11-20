@@ -163,9 +163,6 @@ def generate_devices_poisson_frame(
     # Número de dispositivos sigue Poisson(λ)
     n_devices = np.random.poisson(lambda_mean)
     
-    if n_devices == 0:
-        return np.empty((0, 3)), 0
-    
     x = np.random.uniform(0, area, n_devices)
     y = np.random.uniform(0, area, n_devices)
     z = np.full(n_devices, device_height)
@@ -198,36 +195,70 @@ def generate_devices_poisson_aggregated(
     if base_seed is not None:
         np.random.seed(base_seed)
     
-    all_frames = []
-    frame_data = []
+    # all_frames = []
+    # frame_data = []
+    # frame = []
     
-    for frame_idx in range(n_frames):
-        # Seed único para cada frame
-        frame_seed = base_seed + frame_idx if base_seed is not None else None
+    # for frame_idx in range(n_frames):
+    #     # Seed único para cada frame
+    #     frame_seed = base_seed + frame_idx if base_seed is not None else None
         
-        X_frame, n_frame = generate_devices_poisson_frame(
-            lambda_mean=lambda_mean,
-            area=area,
-            device_height=device_height,
-            seed=frame_seed
-        )
+    #     X_frame, n_frame = generate_devices_poisson_frame(
+    #         lambda_mean=lambda_mean,
+    #         area=area,
+    #         device_height=device_height,
+    #         seed=frame_seed
+    #     )
+
+    #     if frame_idx == 0:
+    #         frame.append(X_frame)
         
-        if n_frame > 0:
-            all_frames.append(X_frame)
+    #     if n_frame > 0:
+    #         all_frames.append(X_frame)
         
-        frame_data.append({
-            'frame': frame_idx,
-            'n_devices': n_frame,
-            'lambda': lambda_mean
-        })
+    #     frame_data.append({
+    #         'frame': frame_idx,
+    #         'n_devices': n_frame,
+    #         'lambda': lambda_mean
+    #     })
+
+    # X = generate_devices(n=lambda_mean, area=area, device_height=1.2, seed=base_seed)
+    # # Agregación: unir todos los frames
+    # if all_frames:
+    #     aggregated = np.vstack(all_frames)
+    # else:
+    #     aggregated = np.empty((0, 3))
     
-    # Agregación: unir todos los frames
-    if all_frames:
-        aggregated = np.vstack(all_frames)
-    else:
-        aggregated = np.empty((0, 3))
+    return generate_devices(n=lambda_mean, area=area,
+                            device_height=device_height,
+                            seed=base_seed)
+
+def plot_poisson_final(X, sim_num, filepath, AXIS_RANGE):
+
+    fig, ax = plt.subplots(figsize=(9, 9))
+    ax.set_facecolor('#0d1117')
+    fig.patch.set_facecolor('#0d1117')
     
-    return aggregated, pd.DataFrame(frame_data)
+    # Scatter 2D (ignorar z por ahora)
+    ax.scatter(X[:, 0], X[:, 1],   
+               s=4, color='#58a6ff', alpha=0.5)
+    
+    n_total = len(X)
+    
+    ax.set_xlim(0, AXIS_RANGE)
+    ax.set_ylim(0, AXIS_RANGE)
+    ax.set_title(f'Dispositivos Agregados - Sim {sim_num}\n' + 
+                 f'Total: {n_total}', color='white', fontsize=11)
+    ax.set_xlabel('X (m)', color='#8b949e')
+    ax.set_ylabel('Y (m)', color='#8b949e')
+    ax.tick_params(colors='#8b949e')
+    for spine in ax.spines.values():
+        spine.set_edgecolor('#30363d')
+    
+    plt.tight_layout()
+    plt.savefig(filepath, dpi=120, bbox_inches='tight')
+    plt.close()
+
 
 def plot_poisson_dynamism(frame_stats_df, sim_num, filepath):
     """

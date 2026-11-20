@@ -1,0 +1,10 @@
+metric,mean,std
+DER_global,0.99761,0.00024
+PDR_global,0.99761,0.00024
+PLR_global,0.00239,0.00024
+mean_delay_ms,1789.35084,15.928889
+n_nodos_con_delay,1000,0.0
+total_collisions,0.0,0.0
+total_dropped_DC,0.0,0.0
+total_received_uniq,509950.25,4398.744633
+total_sent,120098.6,683.444901

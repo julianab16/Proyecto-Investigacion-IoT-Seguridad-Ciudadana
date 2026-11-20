@@ -1,0 +1,15 @@
+metric,mean,std
+DER SF10,0.997315,0.000782
+DER SF11,0.99599,0.00094
+DER SF12,0.993566,0.001386
+DER SF7,0.999407,0.000107
+DER SF8,0.99919,0.000174
+DER SF9,0.998496,0.0004
+LoRa_NS_DER,0.99761,0.00024
+counterUniqueReceivedPacketsPerSF SF10,9866.65,913.595219
+counterUniqueReceivedPacketsPerSF SF11,8875.9,657.159747
+counterUniqueReceivedPacketsPerSF SF12,7181.75,504.094967
+counterUniqueReceivedPacketsPerSF SF7,11628.3,731.954583
+counterUniqueReceivedPacketsPerSF SF8,11086.3,727.265396
+counterUniqueReceivedPacketsPerSF SF9,11241.75,953.695743
+totalReceivedPackets,509950.25,4398.744633

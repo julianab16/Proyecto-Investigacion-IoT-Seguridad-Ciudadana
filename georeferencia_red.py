@@ -7,26 +7,25 @@ import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 import numpy as np
 import pandas as pd
-from shapely.geometry import Point, box
+from shapely.geometry import Point
 import json
 from matplotlib.lines import Line2D
 from matplotlib.patches import Rectangle
 import random
 np.random.seed(42)
 random.seed(42)
-
+import matplotlib as mpl
+import json
+import pickle
+import os
 # Importar clase base de georeferenciación
 sys.path.append(str(Path(__file__).parent))
 from georeferencia import GeoreferenciaMapa
-
+from metricas import gtw_distance, gtw_distance_uniforme, gtw_distance_aleatorio
 # Importar optimizador LoRaWISEP
-opt_dir = Path(__file__).parent / 'optimizacion_gateways'
-
-sys.path.insert(0, str(opt_dir))
 from optimizacion_gateways.kmeans import LoRaWISEPOptimization
 from optimizacion_gateways.ga import LoRaWISEPGAElbow
 from optimizacion_gateways.metricas import LoRaWANMetricsEvaluator
-from metricas import gtw_distance, gtw_distance_uniforme, gtw_distance_aleatorio
 class GeoreferenciaRedLoRaWAN(GeoreferenciaMapa):
     """
     Extensión de GeoreferenciaMapa que integra optimización de red LoRaWAN
@@ -257,7 +256,6 @@ class GeoreferenciaRedLoRaWAN(GeoreferenciaMapa):
 
         return self.gateways, self.assignments
     
- 
     def comparar_metodos(self, export_csv=False):
             """Usa metricas.LoRaWANMetricsEvaluator para evaluar KMeans vs GA y decidir cuál es mejor."""
             if getattr(self, 'gateways_kmeans', None) is None or getattr(self, 'gateways_ga', None) is None:
@@ -692,94 +690,81 @@ class GeoreferenciaRedLoRaWAN(GeoreferenciaMapa):
         }
 
     def guardar_cuadro(self):
+        ancho = 5900
+        alto  = 5900
+        x_ini = 724900
+        y_ini = 868100
+        # ── rcParams IEEE ──
+        mpl.rcParams.update({
+            'font.family':     'sans-serif',
+            'font.sans-serif': ['Arial', 'Helvetica', 'Liberation Sans', 'DejaVu Sans'],
+            'font.size':        8,
+            'axes.labelsize':   8,
+            'axes.titlesize':   9,
+            'xtick.labelsize':  8,
+            'ytick.labelsize':  8,
+            'legend.fontsize':  8,
+            'figure.dpi':       300,
+            'savefig.dpi':      600,        # 600 DPI para PNG (mejor calidad)
+            'grid.alpha':       0.25,
+            'grid.linewidth':   0.4,
+            'axes.linewidth':   0.5,
+        })
 
-        x_ini = 724000
-        y_ini = 867500
-        ancho = 10000
-        alto = 10000
-        x_fin = x_ini + ancho
-        y_fin = y_ini + alto
-        cuadro = box(x_ini, y_ini, x_fin, y_fin)
-
-        # Seleccionar las celdas del mapa de calor que pertenecen al cuadro.
-        celdas_cuadro = self.grid_cali[self.grid_cali.geometry.intersects(cuadro)]
-        informacion_cuadro = []
-        for indice_celda, (_, celda) in enumerate(celdas_cuadro.iterrows(), start=1):
-            geometria = celda.geometry
-            centroide = geometria.centroid
-            interseccion = geometria.intersection(cuadro)
-            informacion_cuadro.append({
-                'id_celda': indice_celda,
-                'indice_inseguridad': float(celda['indice_inseguridad']),
-                'nivel_inseguridad': int(celda['nivel_inseguridad']),
-                'centroide': {
-                    'x': float(centroide.x),
-                    'y': float(centroide.y)
-                },
-                'area_interseccion_m2': float(interseccion.area)
-            })
-
-        # Guardar únicamente datos serializables por JSON.
-        output_path = Path(__file__).resolve().parent / 'data_base'
-        output_path.mkdir(parents=True, exist_ok=True)
-        json_path = output_path / 'indice_inseguridad_cuadro_10000x10000.json'
-        datos_json = {
-            'cuadro': {
-                'ancho_m': ancho,
-                'alto_m': alto
-            },
-            'numero_celdas': len(informacion_cuadro),
-            'indice_inseguridad': informacion_cuadro
-        }
-        with json_path.open('w', encoding='utf-8') as archivo:
-            json.dump(datos_json, archivo, ensure_ascii=False, indent=2)
-
-        plt.rcParams['font.family'] = 'Arial'
-        fig_width_in = 7.16  #  dos columnas
-        fig_height_in = fig_width_in * 0.75    
+        fig_width_in  = 7.16                # IEEE double column
+        fig_height_in = fig_width_in * 0.75
         fig, ax = plt.subplots(figsize=(fig_width_in, fig_height_in))
-                
+
         # Mapa base
-        self.cali.plot(ax=ax, color="white", edgecolor="black", linewidth=1.0, zorder=1)
-        
-        # Si hay bounding box, establecer límites exactos
+        self.cali.plot(ax=ax, color="white", edgecolor="black",
+                    linewidth=1.0, zorder=1)
+
         if self.bbox is not None:
             minx, maxx, miny, maxy = self.bbox
             ax.set_xlim(minx, maxx)
             ax.set_ylim(miny, maxy)
-        
+
         # Colormap
         colors = ["white", "green", "blue", "yellow", "#f05209", "#1a0f0a"]
         cmap = mcolors.LinearSegmentedColormap.from_list("seguridad", colors, N=6)
-        
+
         # Hexágonos
         self.grid_cali.plot(ax=ax, column="nivel_inseguridad", cmap=cmap,
-                        alpha=0.75, edgecolor="black", linewidth=0.3, vmin=0, vmax=5, zorder=3)
+                            alpha=0.75, edgecolor="black", linewidth=0.3,
+                            vmin=0, vmax=5, zorder=3)
 
-        # Resaltar el cuadro de 1.000 m x 1.000 m sobre el mapa de calor.
+        # Rectángulo
         rect = Rectangle(
             (x_ini, y_ini), ancho, alto,
-            linewidth=2.5, edgecolor='deepskyblue', facecolor='aqua',
+            linewidth=1.5, edgecolor='deepskyblue', facecolor='aqua',
             alpha=0.25, zorder=4
         )
         ax.add_patch(rect)
-        
-        plt.xlabel("X Coordinate (m)", fontsize=8)
-        plt.ylabel("Y Coordinate (m)", fontsize=8)
-        ax.tick_params(axis='both', labelsize=8)
 
-        plt.grid(True, alpha=0.5, linestyle='--')
-        plt.subplots_adjust(left=0.08, bottom=0.08, right=0.75, top=0.86)
+        # Labels
+        ax.set_xlabel("X Coordinate (m)")
+        ax.set_ylabel("Y Coordinate (m)")
+        ax.tick_params(axis='both', labelsize=8)
+        ax.grid(True, alpha=0.25, linestyle=':', linewidth=0.4)
+
+        # Colorbar
+        # sm = plt.cm.ScalarMappable(cmap=cmap, norm=plt.Normalize(vmin=0, vmax=5))
+        # cbar = fig.colorbar(sm, ax=ax, fraction=0.046, pad=0.04)
+        # cbar.set_label('Insecurity level', fontsize=8)
+        # cbar.ax.tick_params(labelsize=8)
+
+        plt.tight_layout()
 
         images_dir = Path(__file__).resolve().parent / 'images'
         images_dir.mkdir(parents=True, exist_ok=True)
-        outname = images_dir / 'mil_cuadro.png'
-        plt.savefig(outname, dpi=300, bbox_inches='tight', facecolor='white')
+        outname = images_dir / 'cuadro_sensores.png'
+        plt.savefig(outname,
+                    dpi=600,
+                    bbox_inches='tight',
+                    facecolor='white',
+                    format='png')
         plt.close(fig)
         print(f"Cuadro guardado: {outname}")
-        print(f"Información de inseguridad guardada: {json_path}")
-
-        return datos_json
     
     def ejecutar_pipeline_georeferenciacion(self):
         """
@@ -835,14 +820,7 @@ class GeoreferenciaRedLoRaWAN(GeoreferenciaMapa):
         self.visualizar_red_completa(mostrar_conexiones=True, guardar=True, name='red_lorawan_ga.png')
         print("\n" + "="*70)
 
-# ============================================================================
-# EJECUCIÓN PRINCIPAL
-# ============================================================================
-
 if __name__ == "__main__":
-    import json
-    import pickle
-    import os
     
     # Cargar configuración
     resultados_dir = Path(__file__).resolve().parent / "optimizacion_celda"
@@ -927,18 +905,21 @@ if __name__ == "__main__":
         max_intentos = 100
 
         # Cálculos reales (justo lo que mostraste)
-        res_riesgo = red_cali.gtw_distance(
+        res_riesgo = gtw_distance(
+            red_cali,
             factor_densidad=factor_densidad,
             max_intentos=max_intentos,
             graficar=False,
             guardar=False
         )
-        res_uniforme = red_cali.gtw_distance_uniforme(
+        res_uniforme = gtw_distance_uniforme(
+            red_cali,
             max_intentos=max_intentos,
             graficar=False,
             guardar=False
         )
-        res_aleatorio = red_cali.gtw_distance_aleatorio(
+        res_aleatorio = gtw_distance_aleatorio(
+            red_cali,
             max_intentos=max_intentos,
             graficar=False,
             guardar=False
@@ -961,10 +942,10 @@ if __name__ == "__main__":
             }, f)
 
     # Llamada final (fuera del if/else)
-    red_cali.visualizar_gtw_distance(
-        res_uniforme=res_uniforme,
-        res_aleatorio=res_aleatorio,
-        res_riesgo=res_riesgo,
-        nombre_mapa='qos_logdistance_comparativo.pdf'  # PDF vectorial
-    )
+    # red_cali.visualizar_gtw_distance(
+    #     res_uniforme=res_uniforme,
+    #     res_aleatorio=res_aleatorio,
+    #     res_riesgo=res_riesgo,
+    #     nombre_mapa='qos_logdistance_comparativo.pdf'  # PDF vectorial
+    # )
     red_cali.guardar_cuadro()

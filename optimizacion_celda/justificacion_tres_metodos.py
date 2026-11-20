@@ -4,7 +4,8 @@ import numpy as np
 import matplotlib
 matplotlib.use('Agg') 
 import matplotlib.pyplot as plt
-from shapely.geometry import box
+from shapely.geometry import Polygon, box
+import math
 import pandas as pd
 import warnings
 import json
@@ -64,9 +65,6 @@ for archivo in archivos_a_buscar:
             datasets.append(df)
             archivos_cargados += 1
 
-if archivos_cargados == 0:
-    print("\n[ERROR] No se encontro ningun archivo CSV valido")
-    exit()
 
 df = pd.concat(datasets, ignore_index=True)
 print(f"[OK] Total combinado: {len(df):,} registros")
@@ -75,6 +73,13 @@ print(f"[OK] Total combinado: {len(df):,} registros")
 print("\n[2/5] Cargando limites de Cali...")
 cali = ox.geocode_to_gdf("Santiago de Cali, Colombia", which_result=2)
 cali = cali.to_crs(3116)
+
+# Mantener el mismo recorte y la misma geometría de celdas que georeferencia.py.
+BBOX = (720414.01, 735029.27, 860572.64, 879817.30)  # minx, maxx, miny, maxy
+bbox_gdf = gpd.GeoDataFrame(
+    geometry=[box(BBOX[0], BBOX[2], BBOX[1], BBOX[3])], crs="EPSG:3116"
+)
+cali = gpd.overlay(cali, bbox_gdf, how="intersection")
 
 area_cali = cali.geometry.union_all()
 
@@ -89,29 +94,36 @@ puntos = gpd.GeoDataFrame(
     crs="EPSG:4326"
 )
 puntos = puntos.to_crs(3116)
-puntos = puntos[puntos.within(area_cali)]
+#puntos = puntos[puntos.within(area_cali)]
 print(f"[OK] Puntos dentro de Cali: {len(puntos):,}")
-
-if len(puntos) == 0:
-    print("[ERROR] No hay puntos dentro de Cali")
-    exit()
 
 n_eventos_total = len(puntos)
 
 # ========== FUNCION DE METRICAS ==========
 def calcular_metricas_completas(puntos_gdf, cali_gdf, h_m):
-    """Calcula todas las metricas relevantes"""
+    """Calcula métricas usando la misma grilla hexagonal que el mapa."""
+    lado_hex = float(h_m)
+    ancho_hex = math.sqrt(3) * lado_hex
+    paso_y = 1.5 * lado_hex
     minx, miny, maxx, maxy = cali_gdf.total_bounds
-    
-    x_coords = np.arange(minx, maxx + h_m, h_m)
-    y_coords = np.arange(miny, maxy + h_m, h_m)
-    
-    celdas = []
-    for x in x_coords[:-1]:
-        for y in y_coords[:-1]:
-            celda = box(x, y, x + h_m, y + h_m)
-            if celda.intersects(area_cali):
-                celdas.append(celda)
+    minx -= ancho_hex
+    miny -= lado_hex
+    maxx += ancho_hex
+    maxy += lado_hex
+
+    centros = []
+    for ix, x in enumerate(np.arange(minx, maxx + ancho_hex, ancho_hex)):
+        offset_y = paso_y / 2.0 if ix % 2 == 1 else 0.0
+        for y in np.arange(miny, maxy + paso_y, paso_y):
+            centros.append((x, y + offset_y))
+
+    def hexagono(cx, cy):
+        coords = [(cx + lado_hex * math.cos(i * math.pi / 3.0),
+                   cy + lado_hex * math.sin(i * math.pi / 3.0)) for i in range(6)]
+        return Polygon(coords)
+
+    celdas = [celda for cx, cy in centros
+              for celda in [hexagono(cx, cy)] if celda.intersects(area_cali)]
     
     if len(celdas) == 0:
         return None
@@ -124,10 +136,24 @@ def calcular_metricas_completas(puntos_gdf, cali_gdf, h_m):
     conteo_completo[conteo.index] = conteo.values
     
     n_celdas = len(grid)
-    eventos_por_celda = n_eventos_total / n_celdas
+    eventos_por_celda = conteo_completo.sum() / n_celdas
     pct_vacias = (conteo_completo == 0).sum() / n_celdas * 100
+
+    # Gini de eventos por celda: 0 indica reparto uniforme y valores mayores
+    # indican una concentracion espacial mas desigual de los eventos.
+    conteos_ordenados = np.sort(conteo_completo)
+    suma_eventos = conteos_ordenados.sum()
+    if suma_eventos > 0:
+        posiciones = np.arange(1, n_celdas + 1)
+        gini_eventos = (
+            2 * np.sum(posiciones * conteos_ordenados) / (n_celdas * suma_eventos)
+            - (n_celdas + 1) / n_celdas
+        )
+    else:
+        gini_eventos = 0.0
     
-    densidad = conteo_completo / (h_m**2 / 1e6)
+    area_hex_km2 = (3 * math.sqrt(3) / 2 * lado_hex**2) / 1e6
+    densidad = conteo_completo / area_hex_km2
     varianza = np.var(densidad)
     std_dev = np.std(densidad)
     mean_densidad = np.mean(densidad)
@@ -137,6 +163,7 @@ def calcular_metricas_completas(puntos_gdf, cali_gdf, h_m):
         'n_celdas': n_celdas,
         'eventos_por_celda': eventos_por_celda,
         'pct_vacias': pct_vacias,
+        'gini_eventos': gini_eventos,
         'varianza': varianza,
         'std_dev': std_dev,
         'cv': cv
@@ -153,8 +180,8 @@ nsga_file = resultados_dir / "nsgacelda.json"
 if nsga_file.exists():
     with open(nsga_file, 'r') as f:
         data = json.load(f)
-        valores_optimos['NSGA-II'] = data['celda']
-        print(f"  [OK] NSGA-II: {data['celda']:.2f} m")
+        valores_optimos['NSGA-II'] = round(float(data['celda']), 1)
+        print(f"  [OK] NSGA-II: {valores_optimos['NSGA-II']:.1f} m")
 
 # Metodos Bayesianos
 metodos_file = resultados_dir / "metodos_optimizacion.json"
@@ -162,8 +189,8 @@ if metodos_file.exists():
     with open(metodos_file, 'r') as f:
         data = json.load(f)
         for metodo, info in data.items():
-            valores_optimos[metodo] = info['h_optimo']
-            print(f"  [OK] {metodo}: {info['h_optimo']:.2f} m")
+            valores_optimos[metodo] = round(float(info['h_optimo']), 1)
+            print(f"  [OK] {metodo}: {valores_optimos[metodo]:.1f} m")
 
 # ========== ANALISIS DE SENSIBILIDAD ==========
 print("\n[5/5] Calculando metricas para diferentes tamanos de celda...")
@@ -172,7 +199,6 @@ print("Esto puede tomar varios minutos...\n")
 # Rango de analisis: 50 a 250 metros con resolucion de 5m
 tamanos = np.arange(50, 250, 5)
 resultados = []
-
 
 for i, h in enumerate(tamanos):
     print(f"  Evaluando h = {h:.0f} m... ({i+1}/{len(tamanos)})", end='\r')
@@ -549,7 +575,7 @@ resumen = {
         'optimo': f'{limite_ruido:.0f}m - {limite_sobreagregacion:.0f}m',
         'sobreagregacion': f'h > {limite_sobreagregacion:.0f}m'
     },
-    'recomendacion': round(float(h_optimo_calculado), 0),
+    'recomendacion': round(float(h_optimo_calculado), 1),
     'mejor_metodo': mejor_metodo[0],
     'scores_metodos': {metodo: {'h': float(info['h']), 'score': float(info['score'])} 
                        for metodo, info in scores_metodos.items()}
@@ -655,3 +681,86 @@ fig_combinada.tight_layout(pad=0.5)   # margen compacto
 output_combinada = resultados_dir / "metricas_combinadas_2x2.pdf"
 fig_combinada.savefig(output_combinada, format='pdf', bbox_inches='tight')
 plt.close(fig_combinada)
+
+
+def graficar_curvas_tendencia_metricas(puntos_gdf, cali_gdf, output_path=None):
+    """Guarda las métricas de cobertura, intensidad y concentración por h.
+
+    Calcula las métricas exactamente para h = 50, 100, 160, 200, 238 y 250 m.
+    Usa ejes Y independientes para que las tres escalas sean legibles.
+
+    Args:
+        puntos_gdf: Eventos georreferenciados en el CRS de ``cali_gdf``.
+        cali_gdf: Polígono de Cali utilizado para construir las grillas.
+        output_path: Ruta opcional de salida. Por defecto se guarda junto a
+            este script como ``curvas_tendencia_metricas.png``.
+
+    Returns:
+        Path: Ruta de la imagen guardada.
+    """
+    tamanos_h = np.array([50, 100, 160, 200, 238, 260], dtype=float)
+    filas = []
+    for h in tamanos_h:
+        metricas = calcular_metricas_completas(puntos_gdf, cali_gdf, h)
+        if metricas is None:
+            raise ValueError(f"No se pudo construir la grilla para h={h:g} m.")
+        filas.append(metricas)
+
+    pct_vacias = np.array([fila['pct_vacias'] for fila in filas])
+    eventos_celda = np.array([fila['eventos_por_celda'] for fila in filas])
+    gini_eventos = np.array([fila['gini_eventos'] for fila in filas])
+
+    fig, ax_vacias = plt.subplots(figsize=(7.16, 7.16 * 0.75))
+    ax_eventos = ax_vacias.twinx()
+    ax_gini = ax_vacias.twinx()
+    ax_gini.spines['right'].set_position(('outward', 48))
+
+    linea_vacias, = ax_vacias.plot(
+        tamanos_h, pct_vacias, color='#A23B72', marker='o', linewidth=2,
+        label='% de celdas vacías',
+    )
+    linea_eventos, = ax_eventos.plot(
+        tamanos_h, eventos_celda, color='#F18F01', marker='s', linewidth=2,
+        label='Promedio de eventos por celda',
+    )
+    linea_gini, = ax_gini.plot(
+        tamanos_h, gini_eventos, color='#2E86AB', marker='^', linewidth=2,
+        label='Gini de eventos por celda', 
+    )
+
+    ax_vacias.set_xlabel('Tamaño de celda h (m)', fontsize=11)
+    ax_vacias.set_ylabel('% de celdas vacías', fontsize=11, color=linea_vacias.get_color())
+    ax_eventos.set_ylabel('Eventos promedio por celda', fontsize=11, color=linea_eventos.get_color())
+    ax_gini.set_ylabel('Índice Gini (eventos por celda)', fontsize=11, color=linea_gini.get_color())
+    ax_vacias.tick_params(axis='y', colors=linea_vacias.get_color())
+    ax_eventos.tick_params(axis='y', colors=linea_eventos.get_color())
+    ax_gini.tick_params(axis='y', colors=linea_gini.get_color())
+
+    ax_vacias.set_xticks(tamanos_h, [f'{h:g}' for h in tamanos_h])
+    ax_vacias.set_xlim(40, 260)
+    ax_vacias.grid(True, axis='both', alpha=0.3, linestyle='--')
+    ax_vacias.axvline(160, color='#333333', linestyle=':', linewidth=1.5)
+
+    lineas = [linea_vacias, linea_eventos, linea_gini]
+    leyenda = ax_gini.legend(
+        lineas,
+        [linea.get_label() for linea in lineas],
+        loc='upper center',
+        framealpha=0.95,
+        facecolor='white',
+    )
+    leyenda.set_zorder(200)
+    fig.tight_layout()
+
+    if output_path is None:
+        output_path = Path(__file__).resolve().parent / 'curvas_tendencia_metricas.png'
+    else:
+        output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output_path, dpi=300, bbox_inches='tight', facecolor='white')
+    plt.close(fig)
+    print(f"[OK] Gráfica de curvas de tendencia guardada en: {output_path}")
+    return output_path
+
+
+graficar_curvas_tendencia_metricas(puntos, cali)
