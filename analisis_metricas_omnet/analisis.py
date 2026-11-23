@@ -8,7 +8,7 @@ import os
 # CONFIGURACIÓN
 # =====================================================================
 ESCENARIOS = [ 'Alta','Baja','Media']
-OUT_DIR = 'analisis_metricas_omnet/final1'
+OUT_DIR = 'analisis_metricas_omnet/final'
 
 NODE_SCALARS = {
     'sentPackets',   

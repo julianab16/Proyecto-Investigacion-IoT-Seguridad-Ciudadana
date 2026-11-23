@@ -753,7 +753,7 @@ def plot_mean_toa(tot_con, tot_sin, out_path):
 # ─────────────────────────────────────────────
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--base_dir',   default='analisis_metricas_omnet/final1')
+    parser.add_argument('--base_dir',   default='analisis_metricas_omnet/final')
     parser.add_argument('--sufijo_con', default='conRiesgo')
     parser.add_argument('--sufijo_sin', default='sinRiesgo')
     args = parser.parse_args()

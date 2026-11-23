@@ -316,10 +316,7 @@ class GeoreferenciaRedLoRaWAN(GeoreferenciaMapa):
             print("="*70)
             
             # Mostrar comparación gráfica lado a lado
-            try:
-                self.visualizar_red_completa_comparativa()
-            except Exception as e:
-                print(f"No se pudo mostrar la comparación gráfica: {e}")
+            #self.visualizar_red_completa_comparativa()
             
             return {'kmeans': metrics_km, 'ga': metrics_ga, 'mejor': mejor}
     
@@ -805,7 +802,7 @@ class GeoreferenciaRedLoRaWAN(GeoreferenciaMapa):
         self.optimizar_gateways_ga()
         self.optimizar_gateways_kmeans()
         
-        self.comparar_metodos()
+        #self.comparar_metodos()
         
         # Ejecutar K-Means y guardar su mapa
         # for visualization use kmeans results
@@ -857,9 +854,7 @@ if __name__ == "__main__":
     red_cali = GeoreferenciaRedLoRaWAN(archivos_especificos, PESOS_DELITOS, mejorcelda, bbox=BBOX)
     
     pipeline_flag = "pipeline/pipeline_red_lorawan_done.pkl"
-
     pipeline_geo = "pipeline/pipeline_georeferenciacion_done.pkl"
-
     pipeline_nodos = "pipeline/pipeline_nodos_done.pkl"
 
     # Pipeline de georeferenciación
@@ -900,11 +895,10 @@ if __name__ == "__main__":
         print("Resultados comparativos y nodos cargados desde caché.")
 
     else:
-        # Parámetros (ajusta según tu lógica)
+        # Parámetros
         factor_densidad = 1.0
         max_intentos = 100
 
-        # Cálculos reales (justo lo que mostraste)
         res_riesgo = gtw_distance(
             red_cali,
             factor_densidad=factor_densidad,
@@ -948,4 +942,5 @@ if __name__ == "__main__":
     #     res_riesgo=res_riesgo,
     #     nombre_mapa='qos_logdistance_comparativo.pdf'  # PDF vectorial
     # )
-    red_cali.guardar_cuadro()
+
+    #red_cali.guardar_cuadro()
