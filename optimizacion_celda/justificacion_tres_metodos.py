@@ -716,25 +716,25 @@ def graficar_curvas_tendencia_metricas(puntos_gdf, cali_gdf, output_path=None):
     ax_gini.spines['right'].set_position(('outward', 48))
 
     linea_vacias, = ax_vacias.plot(
-        tamanos_h, pct_vacias, color='#A23B72', marker='o', linewidth=2,
-        label='% de celdas vacías',
+        tamanos_h, pct_vacias, color='#A23B72', marker='o', linestyle=':', linewidth=2,
+        label='% of empty cells',
     )
     linea_eventos, = ax_eventos.plot(
-        tamanos_h, eventos_celda, color='#F18F01', marker='s', linewidth=2,
-        label='Promedio de eventos por celda',
+        tamanos_h, eventos_celda, color='#F18F01', marker='s', linestyle='--', linewidth=2,
+        label='Average events per cell',
     )
     linea_gini, = ax_gini.plot(
-        tamanos_h, gini_eventos, color='#2E86AB', marker='^', linewidth=2,
-        label='Gini de eventos por celda', 
+        tamanos_h, gini_eventos, color='#2E86AB', marker='^', linestyle='-.', linewidth=2,
+        label='Gini index (events per cell)',
     )
 
-    ax_vacias.set_xlabel('Tamaño de celda h (m)', fontsize=11)
-    ax_vacias.set_ylabel('% de celdas vacías', fontsize=11, color=linea_vacias.get_color())
-    ax_eventos.set_ylabel('Eventos promedio por celda', fontsize=11, color=linea_eventos.get_color())
-    ax_gini.set_ylabel('Índice Gini (eventos por celda)', fontsize=11, color=linea_gini.get_color())
-    ax_vacias.tick_params(axis='y', colors=linea_vacias.get_color())
-    ax_eventos.tick_params(axis='y', colors=linea_eventos.get_color())
-    ax_gini.tick_params(axis='y', colors=linea_gini.get_color())
+    ax_vacias.set_xlabel('Cell size h (m)', fontsize=13)
+    ax_vacias.set_ylabel('% of empty cells', fontsize=13, color=linea_vacias.get_color())
+    ax_eventos.set_ylabel('Average events per cell', fontsize=13, color=linea_eventos.get_color())
+    ax_gini.set_ylabel('Gini index (events per cell)', fontsize=13, color=linea_gini.get_color())
+    ax_vacias.tick_params(axis='both', labelsize=13, colors=linea_vacias.get_color())
+    ax_eventos.tick_params(axis='y', labelsize=13, colors=linea_eventos.get_color())
+    ax_gini.tick_params(axis='y', labelsize=13, colors=linea_gini.get_color())
 
     ax_vacias.set_xticks(tamanos_h, [f'{h:g}' for h in tamanos_h])
     ax_vacias.set_xlim(40, 260)
@@ -746,6 +746,7 @@ def graficar_curvas_tendencia_metricas(puntos_gdf, cali_gdf, output_path=None):
         lineas,
         [linea.get_label() for linea in lineas],
         loc='upper center',
+        fontsize=13,
         framealpha=0.95,
         facecolor='white',
     )

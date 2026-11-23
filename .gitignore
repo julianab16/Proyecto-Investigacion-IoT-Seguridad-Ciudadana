@@ -24,3 +24,5 @@ cache/
 .github/
 
 output**/
+.data_base/
+data_base/

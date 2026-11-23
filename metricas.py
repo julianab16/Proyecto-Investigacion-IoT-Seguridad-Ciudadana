@@ -4,6 +4,10 @@ import math
 import numpy as np
 import pandas as pd
 import random
+import importlib
+import importlib.util
+import sys
+import types
 from matplotlib.lines import Line2D
 import matplotlib.pyplot as plt
 from pathlib import Path
@@ -12,7 +16,100 @@ from matplotlib.patches import Rectangle
 np.random.seed(42)
 random.seed(42)
 
-def calcular_gini_espacial(self):
+
+def _cargar_modulo_esda(nombre):
+    """Carga una subrutina de esda sin ejecutar su __init__ agregado.
+
+    Algunas instalaciones de esda importan scikit-learn completo al cargar el
+    paquete, aunque solo se necesite Moran o Getis-Ord. El modulo puede estar
+    dañado en componentes no usados (por ejemplo sklearn.svm._classes).
+    """
+    nombre_modulo = f"esda.{nombre}"
+    if nombre_modulo in sys.modules:
+        return sys.modules[nombre_modulo]
+
+    spec = importlib.util.find_spec("esda")
+    if spec is None or not spec.submodule_search_locations:
+        raise ModuleNotFoundError("No se encontro el paquete esda.")
+
+    paquete_previo = sys.modules.get("esda")
+    if paquete_previo is None:
+        paquete = types.ModuleType("esda")
+        paquete.__path__ = list(spec.submodule_search_locations)
+        paquete.__package__ = "esda"
+        paquete.__file__ = spec.origin
+        sys.modules["esda"] = paquete
+    try:
+        return importlib.import_module(nombre_modulo)
+    finally:
+        if paquete_previo is None:
+            sys.modules.pop("esda", None)
+
+
+def guardar_metricas_escenarios_csv(resultados_por_escenario, output_path):
+    """Guarda solo las 25 metricas solicitadas, con una fila por escenario."""
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    filas = []
+    for escenario, resumen in resultados_por_escenario.items():
+        metricas = resumen.get("metricas", {})
+        gini = metricas.get("gini_espacial", {})
+        moran = metricas.get("moran_i", {})
+        getis = metricas.get("getis_ord_gi_star", {})
+        hci_bci = metricas.get("hci_bci", {})
+        hotspots = getis.get("hotspots", {})
+        coldspots = getis.get("coldspots", {})
+        estadisticas_gi = getis.get("estadisticas_gi", {})
+        hot_clusters = hci_bci.get("hot_clusters", {})
+        background_clusters = hci_bci.get("background_clusters", {})
+        normal = hci_bci.get("normal", {})
+        idr = metricas.get("indice_densidad_relativa", {})
+        clasificacion_idr = idr.get("clasificacion_total", {})
+        signo_idr = idr.get("signo_local_total", {})
+        gradiente = metricas.get("gradiente_espacial", {})
+        clases_gradiente = gradiente.get("resumen_clases", {})
+        estadisticas_rms = gradiente.get("estadisticas_rms", {})
+        shannon = metricas.get("entropia_shannon_vecindario", {})
+
+        filas.append({
+            "Escenario": escenario,
+            "Gini espacial": gini.get("gini_espacial"),
+            "Celdas con al menos un evento (%)": gini.get("porcentaje_celdas_activas"),
+            "Moran's I": moran.get("moran_i"),
+            "Moran's I - Valor esperado": moran.get("valor_esperado"),
+            "Moran's I - Z-score": moran.get("z_score"),
+            "Moran's I - p-valor (perm)": moran.get("p_perm"),
+            "Getis-Ord Gi* - Hotspots total": hotspots.get("total"),
+            "Getis-Ord Gi* - Hotspots (%)": hotspots.get("porcentaje"),
+            "Getis-Ord Gi* - Coldspots total": coldspots.get("total"),
+            "Getis-Ord Gi* - Z mínimo": estadisticas_gi.get("minimo"),
+            "Getis-Ord Gi* - Z máximo": estadisticas_gi.get("maximo"),
+            "HCI - Hot clusters (%)": hot_clusters.get("porcentaje"),
+            "BCI - Background clusters (%)": background_clusters.get("porcentaje"),
+            "Normal (%)": normal.get("porcentaje"),
+            "HCI máximo": hot_clusters.get("hci_max"),
+            "Gradiente espacial - Suaves": clases_gradiente.get("suaves"),
+            "Gradiente espacial - Moderadas": clases_gradiente.get("moderadas"),
+            "Gradiente espacial - Abruptas": clases_gradiente.get("abruptas"),
+            "Gradiente RMS - Media": estadisticas_rms.get("media"),
+            "Gradiente RMS - Desv. estándar": estadisticas_rms.get("std"),
+            "IDR - Moderado + Alto + Muy alto": sum(
+                clasificacion_idr.get(nivel, 0) for nivel in ("moderado", "alto", "muy_alto")
+            ),
+            "IDR - Más denso que vecinos": signo_idr.get("mas_denso_que_vecinos"),
+            "IDR - Menos denso que vecinos": signo_idr.get("menos_denso_que_vecinos"),
+            "Entropía Shannon - Media": shannon.get("entropia", {}).get("media"),
+            "Homogeneidad - Media": shannon.get("homogeneidad", {}).get("media"),
+        })
+
+    columnas = list(filas[0].keys()) if filas else ["Escenario"]
+    pd.DataFrame(filas, columns=columnas).to_csv(
+        output_path, index=False, encoding="utf-8-sig"
+    )
+    print(f"CSV de metricas guardado: {output_path}")
+    return output_path
+
+def calcular_gini_espacial(self, variable='num_eventos'):
         """
         Calcula el Índice de Gini espacial sobre num_eventos (delitos por celda).
         Incluye todas las celdas (incluidas las de 0 eventos) para medir concentración real.
@@ -20,7 +117,7 @@ def calcular_gini_espacial(self):
         print("\n[Análisis] Calculando Índice de Gini espacial (num_eventos)...")
     
         # Serie de eventos por celda (incluye ceros)
-        y = self.grid_cali.get('num_eventos', pd.Series(dtype=int)).fillna(0).astype(float).values
+        y = self.grid_cali.get(variable, pd.Series(dtype=int)).fillna(0).astype(float).values
         n = len(y)
     
         # Fórmula estándar del Gini (orden ascendente). Si suma_total=0 => Gini=0 (uniforme)
@@ -43,12 +140,13 @@ def calcular_gini_espacial(self):
         mediana = float(np.median(y))
         desviacion_std = float(np.std(y))
         cv = 0.0 if media == 0 else (desviacion_std / media) * 100.0
-        total_eventos = int(suma_total)
+        total_eventos = round(suma_total, 4)
         total_celdas = n
         celdas_con_eventos = int(np.sum(y > 0))
     
         resultados = {
             'gini_espacial': gini,
+            'variable_analizada': variable,
             'interpretacion': (
                 "Baja desigualdad - Distribución relativamente uniforme" if gini < 0.3 else
                 "Desigualdad moderada - Cierta concentración espacial" if gini < 0.5 else
@@ -64,8 +162,8 @@ def calcular_gini_espacial(self):
             'mediana_eventos_por_celda': round(mediana, 2),
             'desviacion_std': round(desviacion_std, 2),
             'coeficiente_variacion': round(cv, 2),
-            'max_eventos_celda': int(np.max(y)) if n > 0 else 0,
-            'min_eventos_celda': int(np.min(y)) if n > 0 else 0
+            'max_eventos_celda': round(float(np.max(y)), 4) if n > 0 else 0,
+            'min_eventos_celda': round(float(np.min(y)), 4) if n > 0 else 0
         }
     
         # Output
@@ -84,14 +182,14 @@ def calcular_gini_espacial(self):
     
         return resultados
     
-def calcular_moran_i(self):
+def calcular_moran_i(self, variable='num_eventos'):
     """
     Moran's I sobre las celdas del mapa de calor (num_eventos).
     Indica si zonas cercanas tienden a tener valores similares (agrupación) o diferentes (dispersión).
     """
     print("\n[Análisis] Calculando Índice de Moran I (autocorrelación espacial) con num_eventos...")
 
-    from esda.moran import Moran
+    Moran = _cargar_modulo_esda("moran").Moran
     from libpysal.weights import KNN
 
     # Pesos espaciales (Queen/Rook) y fallback a KNN si hay islas
@@ -104,7 +202,7 @@ def calcular_moran_i(self):
                 print(f"Pesos KNN usados (k={k}) para evitar islas")
                 break
     w.transform = 'r'
-    y = self.grid_cali['num_eventos'].values.astype(float)
+    y = self.grid_cali[variable].values.astype(float)
     # Moran's I (z-normal y permutaciones para p-valor robusto)
     moran = Moran(y, w, permutations=999)
     z_score = (moran.I - moran.EI) / np.sqrt(moran.VI_norm)
@@ -148,7 +246,7 @@ def calcular_moran_i(self):
         'patron_espacial': patron,
         'n_vecindarios': w.n,
         'vecinos_promedio': round(w.mean_neighbors, 2),
-        'variable_analizada': 'num_eventos'
+            'variable_analizada': variable
     }
 
     print("\n" + "="*70)
@@ -161,13 +259,13 @@ def calcular_moran_i(self):
 
     return resultados
 
-def calcular_getis_ord_gi_star(self):
+def calcular_getis_ord_gi_star(self, variable='num_eventos'):
     """
     Calcula Getis-Ord Gi* (hotspots/coldspots) usando el número de eventos por celda (num_eventos).
     Incluye fallback a pesos KNN para evitar islas y NaN.
     """
 
-    from esda.getisord import G_Local
+    G_Local = _cargar_modulo_esda("getisord").G_Local
     from libpysal.weights import KNN
 
     # Usar matriz de pesos silenciosa (Queen/Rook)
@@ -186,16 +284,16 @@ def calcular_getis_ord_gi_star(self):
             print("Persisten islas con KNN; se continúa con la mejor opción disponible")
 
     # Asegurar num_eventos en grid_cali
-    if 'num_eventos' not in self.grid_cali.columns:
-        if 'grid_id' in self.grid_cali.columns and 'num_eventos' in self.grid.columns:
+    if variable not in self.grid_cali.columns:
+        if 'grid_id' in self.grid_cali.columns and variable in self.grid.columns:
             self.grid_cali = self.grid_cali.merge(
-                self.grid[['grid_id', 'num_eventos']],
+                self.grid[['grid_id', variable]],
                 on='grid_id', how='left'
             )
-        self.grid_cali['num_eventos'] = self.grid_cali.get('num_eventos', 0).fillna(0).astype(int)
+        self.grid_cali[variable] = self.grid_cali.get(variable, 0).fillna(0)
 
     # Preparar datos
-    y = self.grid_cali['num_eventos'].values.astype(float)
+    y = self.grid_cali[variable].values.astype(float)
     if np.isnan(y).any():
         y = np.nan_to_num(y, nan=0.0)
 
@@ -203,7 +301,7 @@ def calcular_getis_ord_gi_star(self):
     if float(np.std(y)) == 0.0:
         return {
             'total_celdas': len(self.grid_cali),
-            'variable_analizada': 'num_eventos',
+            'variable_analizada': variable,
             'hotspots': {'total': 0, 'porcentaje': 0.0},
             'coldspots': {'total': 0, 'porcentaje': 0.0},
             'no_significativo': {'total': len(self.grid_cali), 'porcentaje': 100.0}
@@ -211,7 +309,15 @@ def calcular_getis_ord_gi_star(self):
 
     # Transformar pesos y calcular Gi*
     w.transform = 'r'
-    gi_star = G_Local(y, w, star=True, permutations=999)
+    # esda 2.9 aun usa np.row_stack internamente; NumPy reciente lo retiro.
+    row_stack_original = getattr(np, 'row_stack', None)
+    if row_stack_original is None:
+        np.row_stack = np.vstack
+    try:
+        gi_star = G_Local(y, w, star=True, permutations=999)
+    finally:
+        if row_stack_original is None:
+            del np.row_stack
 
     gi_values = gi_star.Zs
     p_values = gi_star.p_sim
@@ -254,7 +360,7 @@ def calcular_getis_ord_gi_star(self):
 
     resultados = {
         'total_celdas': total_celdas,
-        'variable_analizada': 'num_eventos',
+        'variable_analizada': variable,
         'hotspots': {
             'total': total_hotspots,
             'porcentaje': round(pct_hotspots, 2),
@@ -291,7 +397,7 @@ def calcular_getis_ord_gi_star(self):
 
     return resultados
 
-def calcular_hci_bci(self):
+def calcular_hci_bci(self, variable='num_eventos'):
     """
     Calcula HCI/BCI usando el número de delitos por celda (num_eventos):
     - HCI_i = (N_i - N_mean) / N_std  si N_i > N_mean
@@ -302,7 +408,7 @@ def calcular_hci_bci(self):
     w = self._crear_pesos()
     w.transform = 'r'
 
-    eventos = self.grid_cali['num_eventos'].values.astype(float)
+    eventos = self.grid_cali[variable].values.astype(float)
 
     # Estadísticas
     n_mean = np.mean(eventos)
@@ -376,18 +482,19 @@ def calcular_hci_bci(self):
             neigh_labels = w.neighbors.get(idx_label, [])
             neigh_pos = [index_pos[n] for n in neigh_labels if n in index_pos]
             if len(neigh_pos) > 0:
-                lag_eventos.append(float(np.mean(self.grid_cali.iloc[neigh_pos]['num_eventos'].values)))
+                lag_eventos.append(float(np.mean(self.grid_cali.iloc[neigh_pos][variable].values)))
             else:
                 lag_eventos.append(0.0)
 
     resultados = {
         'total_celdas': total_celdas,
+        'variable_analizada': variable,
         'eventos_estadisticas': {
             'media': round(n_mean, 4),
             'std': round(n_std, 4),
             'mediana': round(n_median, 4),
-            'min': int(np.min(eventos)),
-            'max': int(np.max(eventos))
+            'min': round(float(np.min(eventos)), 4),
+            'max': round(float(np.max(eventos)), 4)
         },
         'hot_clusters': {
             'total': int(hci_total),
@@ -419,7 +526,7 @@ def calcular_hci_bci(self):
             resultados['top_hot_clusters'].append({
                 'celda_id': int(self.grid_cali.iloc[pos]['grid_id']),
                 'hci': round(float(hci[pos]), 4),
-                'num_eventos': int(self.grid_cali.iloc[pos]['num_eventos']),
+                'valor_analizado': round(float(self.grid_cali.iloc[pos][variable]), 4),
                 'eventos_vecinos_promedio': round(lag_eventos[i], 2) if i < len(lag_eventos) else 0.0
             })
 
@@ -610,7 +717,13 @@ def calcular_entropia_shannon_vecindario(self, gpd, categorias=None):
     K = len(categorias)
 
     # Tabla de cuentas por celda y categoría
-    tabla = casos_con_celda.groupby(['grid_id', 'categoria']).size().unstack(fill_value=0)
+    if 'peso_delito_escenario' in casos_con_celda.columns:
+        tabla = casos_con_celda.pivot_table(
+            index='grid_id', columns='categoria', values='peso_delito_escenario',
+            aggfunc='sum', fill_value=0,
+        )
+    else:
+        tabla = casos_con_celda.groupby(['grid_id', 'categoria']).size().unstack(fill_value=0)
     for cat in categorias:
         if cat not in tabla.columns:
             tabla[cat] = 0

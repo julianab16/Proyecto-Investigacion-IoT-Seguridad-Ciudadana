@@ -11,6 +11,7 @@ import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 from pathlib import Path
 import libpysal, warnings, contextlib, builtins, sys, os, logging
+from metricas import calcular_entropia_shannon_vecindario, calcular_getis_ord_gi_star, calcular_gini_espacial, calcular_gradiente_espacial, calcular_hci_bci, calcular_indice_densidad_relativa, calcular_moran_i, guardar_metricas_escenarios_csv
 
 class GeoreferenciaMapa:
     def __init__(self, archivos_especificos, PESOS_DELITOS, mejorcelda, bbox=None):
@@ -184,15 +185,46 @@ class GeoreferenciaMapa:
         return df
     
     def procesar_csv(self, archivo, nombre_categoria=None):
-        """Procesa un archivo CSV y retorna DataFrame limpio"""
+        """Carga un CSV y conserva solo hechos de julio 2023 a julio 2024."""
         try:
             print(f"\n  Cargando: {archivo}")
             df = pd.read_csv(archivo, encoding='utf-8', on_bad_lines='skip')
-            
+
+            # Normalizar encabezados para encontrar Año_Hecho y Mes_Hecho
+            # sin depender de mayúsculas ni espacios accidentales.
+            df.columns = df.columns.str.strip().str.lower()
             print(f" Registros iniciales: {len(df):,}")
-            
+
+            columnas_fecha = {'año_hecho', 'mes_hecho'}
+            faltantes = columnas_fecha.difference(df.columns)
+            if faltantes:
+                print(
+                    f"    No se procesa {archivo}: faltan las columnas "
+                    f"{', '.join(sorted(faltantes))}."
+                )
+                return None
+
+            anio = pd.to_numeric(df['año_hecho'], errors='coerce')
+            mes_texto = df['mes_hecho'].astype('string').str.strip().str.lower()
+            meses = {
+                'enero': 1, 'febrero': 2, 'marzo': 3, 'abril': 4,
+                'mayo': 5, 'junio': 6, 'julio': 7, 'agosto': 8,
+                'septiembre': 9, 'setiembre': 9, 'octubre': 10,
+                'noviembre': 11, 'diciembre': 12,
+            }
+            mes = pd.to_numeric(mes_texto, errors='coerce')
+            mes_nombres = mes_texto.map(meses)
+            mes = mes.fillna(mes_nombres)
+
+            periodo = (anio * 100 + mes).between(202307, 202407)
+            df = df.loc[periodo].copy()
+            print(f" Registros entre julio de 2023 y julio de 2024: {len(df):,}")
+
             df = self.limpiar_coordenadas(df, 'y', 'x')
-            
+            if df is None:
+                print(f"    No se procesa {archivo}: faltan columnas de coordenadas x/y.")
+                return None
+
             df.columns = df.columns.str.strip().str.lower()
             
             if nombre_categoria:
@@ -529,7 +561,7 @@ class GeoreferenciaMapa:
         plt.grid(True, alpha=0.5, linestyle='--')
         
         # Guardar mapa completo (con todos los elementos)
-        out_path_completo = images_dir / "mapa_calor_genero_cali.pdf"
+        out_path_completo = images_dir /  "Experimento" / "mapa_calor_genero_cali_20232024.pdf"
         plt.savefig(out_path_completo, format='pdf', bbox_inches='tight')
         print(f" Mapa completo guardado: {out_path_completo.name}")
 
@@ -664,7 +696,38 @@ class GeoreferenciaMapa:
         plt.close(fig)
         print(f"Panel comparativo guardado: {output_path}")
         return output_path
-        
+
+    def calcular_metricas(self, output_path=None):
+        """Calcula las metricas espaciales con la configuracion ya cargada."""
+        if self.grid is None or self.grid.empty or self.grid_cali is None or self.grid_cali.empty:
+            raise RuntimeError("Primero debe generarse y procesarse la grilla.")
+        if self.gdf_casos is None or self.gdf_casos.empty:
+            raise RuntimeError("Primero deben georreferenciarse los casos.")
+
+        metricas = {
+            "gini_espacial": calcular_gini_espacial(self, variable="score_raw"),
+            "moran_i": calcular_moran_i(self, variable="score_raw"),
+            "getis_ord_gi_star": calcular_getis_ord_gi_star(self, variable="score_raw"),
+            "hci_bci": calcular_hci_bci(self, variable="score_raw"),
+            "indice_densidad_relativa": calcular_indice_densidad_relativa(self, gpd),
+            "entropia_shannon_vecindario": calcular_entropia_shannon_vecindario(self, gpd),
+            "gradiente_espacial": calcular_gradiente_espacial(
+                self, variable="score_raw"
+            ),
+        }
+        resultados = {"metricas": metricas}
+        self.resultados_metricas = resultados
+
+        if output_path is None:
+            output_path = (
+                Path(__file__).resolve().parent
+                / "images" / "Experimento" / "resultados_metricas_2023_2024.csv"
+            )
+        # El exportador actual escribe una fila por entrada; esta es la unica configuracion.
+        return guardar_metricas_escenarios_csv(
+            {"Configuracion actual": resultados}, output_path
+        )
+
     def ejecutar_pipeline_completo(self):
         """Ejecuta todo el pipeline de procesamiento"""
         self.mostrar_encabezado()
@@ -678,6 +741,9 @@ class GeoreferenciaMapa:
         self.clasificar_niveles_inseguridad()
         self.visualizar_mapa()
         self.guardar_panel_comparativo_resoluciones()
+
+        self.calcular_metricas()
+
         
         # Calcular métricas espaciales
         #gini_results = self.calcular_gini_espacial()
