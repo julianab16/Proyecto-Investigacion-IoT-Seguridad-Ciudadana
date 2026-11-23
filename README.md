@@ -24,12 +24,6 @@ Contiene scripts y resultados del procesamiento de simulaciones OMNeT++ para dis
 | `analisis.py` | Lee resultados de simulación y calcula tablas de métricas por escenario. Su configuración actual guarda resultados en `final/`. |
 | `comparar.py` | Compara resultados entre escenarios y genera resúmenes y gráficas. |
 
-
-### `images/`
-
-Mapas, diagramas y resultados gráficos exportados por los scripts.
-
-
 ### `optimizacion_celda/`
 
 Código y resultados para evaluar tamaños de celda y métodos de optimización.
@@ -44,7 +38,12 @@ Código y resultados para evaluar tamaños de celda y métodos de optimización.
 
 Herramientas para generar y ubicar gateways en una red.
 
-- `ga.py`: optimizador de ubicación mediante algoritmo genético.
-- `kmeans.py`: optimiza ubicaciones mediante K-Means.
-- `metricas.py`: métricas para evaluar soluciones de ubicación de gateways.
+| Archivo o carpeta | Contenido |
+|---|---|
+| `ga.py` | Optimizador de ubicación mediante algoritmo genético. |
+| `kmeans.py` | Optimiza ubicaciones mediante K-Means. |
+| `metricas.py` | Métricas para evaluar soluciones de ubicación de gateways. |
 
+### `images/`
+
+Mapas, diagramas y resultados gráficos exportados por los scripts.
