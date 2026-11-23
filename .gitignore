@@ -19,6 +19,10 @@ data_base/
 cache/
 matlab/
 .matlab/
+answer/
+.answer/
+optimizacion_nodos/
+.optimizacion_nodos/
 
 # VS Code settings (personal configuration)
 .vscode/

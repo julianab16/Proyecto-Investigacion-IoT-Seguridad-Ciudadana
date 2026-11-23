@@ -11,6 +11,7 @@ import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 from pathlib import Path
 import libpysal, warnings, contextlib, builtins, sys, os, logging
+from metricas import calcular_entropia_shannon_vecindario, calcular_getis_ord_gi_star, calcular_gini_espacial, calcular_gradiente_espacial, calcular_hci_bci, calcular_indice_densidad_relativa, calcular_moran_i, guardar_metricas_escenarios_csv
 
 class GeoreferenciaMapa:
     def __init__(self, archivos_especificos, PESOS_DELITOS, mejorcelda, bbox=None):
@@ -622,7 +623,7 @@ class GeoreferenciaMapa:
             grids.append(grid_cali)
 
         plt.rcParams["font.family"] = "Arial"
-        fig_width_in = 7.16  # dos columnas
+        fig_width_in = 7.16  
         fig_height_in = fig_width_in * 0.59
         fig, axes = plt.subplots(1, 3, figsize=(fig_width_in, fig_height_in))
         bounds = self.cali.total_bounds
@@ -664,6 +665,37 @@ class GeoreferenciaMapa:
         plt.close(fig)
         print(f"Panel comparativo guardado: {output_path}")
         return output_path
+
+    def calcular_metricas(self, output_path=None):
+            """Calcula las metricas espaciales con la configuracion ya cargada."""
+            if self.grid is None or self.grid.empty or self.grid_cali is None or self.grid_cali.empty:
+                raise RuntimeError("Primero debe generarse y procesarse la grilla.")
+            if self.gdf_casos is None or self.gdf_casos.empty:
+                raise RuntimeError("Primero deben georreferenciarse los casos.")
+    
+            metricas = {
+                "gini_espacial": calcular_gini_espacial(self, variable="score_raw"),
+                "moran_i": calcular_moran_i(self, variable="score_raw"),
+                "getis_ord_gi_star": calcular_getis_ord_gi_star(self, variable="score_raw"),
+                "hci_bci": calcular_hci_bci(self, variable="score_raw"),
+                "indice_densidad_relativa": calcular_indice_densidad_relativa(self, gpd),
+                "entropia_shannon_vecindario": calcular_entropia_shannon_vecindario(self, gpd),
+                "gradiente_espacial": calcular_gradiente_espacial(
+                    self, variable="score_raw"
+                ),
+            }
+            resultados = {"metricas": metricas}
+            self.resultados_metricas = resultados
+    
+            if output_path is None:
+                output_path = (
+                    Path(__file__).resolve().parent
+                    / "images" / "Experimento" / "resultados_metricas_2023_2024.csv"
+                )
+            # El exportador actual escribe una fila por entrada; esta es la unica configuracion.
+            return guardar_metricas_escenarios_csv(
+                {"Configuracion actual": resultados}, output_path
+            )
         
     def ejecutar_pipeline_completo(self):
         """Ejecuta todo el pipeline de procesamiento"""
@@ -680,13 +712,8 @@ class GeoreferenciaMapa:
         self.guardar_panel_comparativo_resoluciones()
         
         # Calcular métricas espaciales
-        #gini_results = self.calcular_gini_espacial()
-        #moran_results = self.calcular_moran_i()
-        #gi_star_results = self.calcular_getis_ord_gi_star()
-        #hci_bci_results = self.calcular_hci_bci()
-        #idr_results = self.calcular_indice_densidad_relativa()
-        #shannon_results = self.calcular_entropia_shannon_vecindario()
-        #gradiente = self.calcular_gradiente_espacial()
+        self.calcular_metricas()
+        
 
         # Visualizar hotspots
         print("\n" + "="*70)

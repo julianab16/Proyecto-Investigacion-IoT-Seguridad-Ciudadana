@@ -56,7 +56,7 @@ mpl.rcParams.update({
 
 # nombre interno → (etiqueta corta, etiqueta larga)
 SCENARIO_META = {
-    'Baja':  ('1800s', 'Low'),
+    'Baja':  ('600s', 'Low'),
     'Media': ('200s', 'Medium'),
     'Alta':  ('100s',  'High'),
 }
