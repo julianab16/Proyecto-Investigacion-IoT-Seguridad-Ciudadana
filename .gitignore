@@ -15,7 +15,10 @@ env/
 .env/
 pipeline/
 data_base/
+.data_base/
 cache/
+matlab/
+.matlab/
 
 # VS Code settings (personal configuration)
 .vscode/
@@ -24,5 +27,3 @@ cache/
 .github/
 
 output**/
-.data_base/
-data_base/
